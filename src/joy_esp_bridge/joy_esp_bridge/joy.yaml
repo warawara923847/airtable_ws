@@ -1,0 +1,7 @@
+joy_node:
+  ros__parameters:
+    dev: "/dev/input/joypad"        # または /dev/input/js0 など
+    deadzone: 0.05
+    autorepeat_rate: 20.0
+    coalesce_interval: 0.02
+
