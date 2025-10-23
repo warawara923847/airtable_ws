@@ -8,7 +8,7 @@
 #include <rcl/rcl.h>
 #include <rclc/rclc.h>
 #include <rclc/executor.h>
-#include <geometry_msgs/msg/vector3.h>
+#include <geometry_msgs/msg/vector3_stamped.h>
 #include <std_msgs/msg/float32.h>
 #include <std_msgs/msg/bool.h>
 
@@ -23,9 +23,9 @@ rclc_support_t support;
 rcl_allocator_t allocator;
 rcl_node_t node;
 
-geometry_msgs__msg__Vector3 gyro_msg;
-geometry_msgs__msg__Vector3 accel_msg;
-geometry_msgs__msg__Vector3 euler_msg; // heading(yaw), roll, pitch in radians
+geometry_msgs__msg__Vector3Stamped gyro_msg;
+geometry_msgs__msg__Vector3Stamped accel_msg;
+geometry_msgs__msg__Vector3Stamped euler_msg; // heading(yaw), roll, pitch in radians
 std_msgs__msg__Float32 servo_msg;
 std_msgs__msg__Float32 angle_msg; // 手動設定姿勢角 [deg]
 
@@ -96,7 +96,6 @@ void setup() {
   delay(2000);
   
   // ==== Wi-Fi 接続 ====
-  // WiFi.begin(ssid, password);
   WiFi.begin(WIFI_SSID, WIFI_PASS);
   Serial.print("Connecting to WiFi");
   while(WiFi.status() != WL_CONNECTED) {
@@ -107,7 +106,6 @@ void setup() {
   Serial.println(WiFi.localIP());
 
   // micro-ROS エージェントに接続
-  //set_microros_wifi_transports(ssid, password, agent_ip, AGENT_PORT);
   set_microros_wifi_transports(WIFI_SSID, WIFI_PASS, AGENT_IP, AGENT_PORT);
   delay(2000);
 
@@ -118,12 +116,12 @@ void setup() {
 
   rclc_publisher_init_default(
     &pub_gyro, &node,
-    ROSIDL_GET_MSG_TYPE_SUPPORT(geometry_msgs, msg, Vector3),
+    ROSIDL_GET_MSG_TYPE_SUPPORT(geometry_msgs, msg, Vector3Stamped),
     "imu/gyro");
 
   rclc_publisher_init_default(
     &pub_accel, &node,
-    ROSIDL_GET_MSG_TYPE_SUPPORT(geometry_msgs, msg, Vector3),
+    ROSIDL_GET_MSG_TYPE_SUPPORT(geometry_msgs, msg, Vector3Stamped),
     "imu/accel");
   
   rclc_publisher_init_default(
@@ -133,7 +131,7 @@ void setup() {
 
   rclc_publisher_init_default(
     &pub_euler, &node,
-    ROSIDL_GET_MSG_TYPE_SUPPORT(geometry_msgs, msg, Vector3),
+    ROSIDL_GET_MSG_TYPE_SUPPORT(geometry_msgs, msg, Vector3Stamped),
     "imu/euler");
 
   rclc_subscription_init_default(
@@ -182,17 +180,25 @@ void loop() {
     rcl_ret_t ret;
     
     // IMU publish
-    gyro_msg.x = gyro.x();
-    gyro_msg.y = gyro.y();
-    gyro_msg.z = gyro.z();
+    int64_t now_millis = rmw_uros_epoch_millis();
+    gyro_msg.header.stamp.sec = now_millis / 1000;
+    gyro_msg.header.stamp.nanosec = (now_millis % 1000) * 1000000;
+    gyro_msg.header.frame_id.data = (char *)"base_link";
+    gyro_msg.vector.x = gyro.x();
+    gyro_msg.vector.y = gyro.y();
+    gyro_msg.vector.z = gyro.z();
     ret = rcl_publish(&pub_gyro, &gyro_msg, NULL);
     if(ret != RCL_RET_OK) {
       Serial.printf("Error publishing gyro: %d\n", ret);
     }
 
-    accel_msg.x = accel.x();
-    accel_msg.y = accel.y();
-    accel_msg.z = accel.z();
+    int64_t now_millis_accel = rmw_uros_epoch_millis();
+    accel_msg.header.stamp.sec = now_millis_accel / 1000;
+    accel_msg.header.stamp.nanosec = (now_millis_accel % 1000) * 1000000;
+    accel_msg.header.frame_id.data = (char *)"base_link";
+    accel_msg.vector.x = accel.x();
+    accel_msg.vector.y = accel.y();
+    accel_msg.vector.z = accel.z();
     ret = rcl_publish(&pub_accel, &accel_msg, NULL);
     if(ret != RCL_RET_OK) {
       Serial.printf("Error publishing accel: %d\n", ret);
@@ -200,9 +206,13 @@ void loop() {
 
     // Euler angles publish (convert deg->rad)
     const float deg2rad = 0.017453292519943295f;
-    euler_msg.x = euler.x() * deg2rad; // heading (yaw)
-    euler_msg.y = euler.y() * deg2rad; // roll
-    euler_msg.z = euler.z() * deg2rad; // pitch
+    int64_t now_millis_euler = rmw_uros_epoch_millis();
+    euler_msg.header.stamp.sec = now_millis_euler / 1000;
+    euler_msg.header.stamp.nanosec = (now_millis_euler % 1000) * 1000000;
+    euler_msg.header.frame_id.data = (char *)"base_link";
+    euler_msg.vector.x = euler.x() * deg2rad; // heading (yaw)
+    euler_msg.vector.y = euler.y() * deg2rad; // roll
+    euler_msg.vector.z = euler.z() * deg2rad; // pitch
     ret = rcl_publish(&pub_euler, &euler_msg, NULL);
     Serial.printf("Theta: %.2f deg", euler.x());
     if(ret != RCL_RET_OK) {
@@ -238,61 +248,4 @@ void loop() {
       servo2.write(manual_angle);
   }
 }
-// Servo servo1, servo2;
-// int pin1 = 0, pin2 = 15;
 
-// rcl_subscription_t sub1, sub2;
-// std_msgs__msg__Float32 msg1, msg2;
-// rcl_node_t node;
-// rcl_allocator_t allocator;
-// rclc_support_t support;
-// rclc_executor_t executor;
-
-// int minUs = 500;
-// int maxUs = 2500;
-
-// void cb1(const void *msgin) {
-//   float cmd = ((std_msgs__msg__Float32*)msgin)->data;
-//   servo1.writeMicroseconds(1500 + cmd * 2);
-// }
-// void cb2(const void *msgin) {
-//   float cmd = ((std_msgs__msg__Float32*)msgin)->data;
-//   servo2.writeMicroseconds(1500 + cmd * 2);
-// }
-
-// void setup() {
-//   Serial.begin(115200);
-//   delay(2000);
-
-//   // ==== Wi-Fi 接続 ====
-//   WiFi.begin(ssid, password);
-//   Serial.print("Connecting to WiFi");
-//   while(WiFi.status() != WL_CONNECTED) {
-//     Serial.print(".");
-//     delay(500);
-//   }
-//   Serial.println("\nWiFi connected!");
-//   Serial.println(WiFi.localIP());
-
-//   // micro-ROS エージェントに接続
-//   set_microros_wifi_transports(ssid, password, agent_ip, agent_port);
-//   delay(2000);
-
-//   rclc_support_init(&support, 0, NULL, &allocator);
-//   rclc_node_init_default(&node, "esp_servo_node", "", &support);
-
-//   rclc_subscription_init_default(&sub1, &node, ROSIDL_GET_MSG_TYPE_SUPPORT(std_msgs, msg, Float32), "servo1/cmd");
-//   rclc_subscription_init_default(&sub2, &node, ROSIDL_GET_MSG_TYPE_SUPPORT(std_msgs, msg, Float32), "servo2/cmd");
-
-//   rclc_executor_init(&executor, &support.context, 2, &allocator);
-//   rclc_executor_add_subscription(&executor, &sub1, &msg1, &cb1, ON_NEW_DATA);
-//   rclc_executor_add_subscription(&executor, &sub2, &msg2, &cb2, ON_NEW_DATA);
-
-//   servo1.attach(pin1);
-//   servo2.attach(pin2);
-//   allocator = rcl_get_default_allocator();
-// }
-
-// void loop() {
-//   rclc_executor_spin_some(&executor, RCL_MS_TO_NS(10));
-// }
