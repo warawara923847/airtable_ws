@@ -14,6 +14,11 @@ __pycache__/
 .pio/
 .DS_Store
 
+# esp
+firmware/.pio/
+firmware/.vscode/
+firmware/.gcc.flags.json
+
 # Firmware binaries
 *.bin
 *.elf
