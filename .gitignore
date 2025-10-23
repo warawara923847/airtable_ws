@@ -17,6 +17,7 @@ __pycache__/
 # PlatformIO build outputs
 firmware/.pio/
 firmware/.vscode/
+firmware/.gitignore
 firmware/.gcc.flags.json
 
 # Firmware binaries
