@@ -14,7 +14,7 @@ __pycache__/
 .pio/
 .DS_Store
 
-# esp
+# PlatformIO build outputs
 firmware/.pio/
 firmware/.vscode/
 firmware/.gcc.flags.json
