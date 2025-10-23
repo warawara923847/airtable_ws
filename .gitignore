@@ -20,6 +20,9 @@ firmware/.vscode/
 firmware/.gitignore
 firmware/.gcc.flags.json
 
+# Wi-Fi credentials (do not commit)
+firmware/include/wifi_config.hpp
+
 # Firmware binaries
 *.bin
 *.elf

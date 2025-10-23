@@ -3,6 +3,7 @@
 #include <WiFi.h>
 #include <Adafruit_BNO055.h>
 #include <ESP32Servo.h>
+#include "wifi_config.hpp" // Wi-Fi設定
 
 #include <rcl/rcl.h>
 #include <rclc/rclc.h>
@@ -10,19 +11,6 @@
 #include <geometry_msgs/msg/vector3.h>
 #include <std_msgs/msg/float32.h>
 #include <std_msgs/msg/bool.h>
-
-// ==== Wi-Fi settings ====
-// ==== 家用 ====
-// char ssid[] = "mmm";
-// char password[] = "momoka19990805";
-// char agent_ip[] = "192.168.0.163"; // PCのIPアドレス
-
-// ==== AP用 ====
-#define WIFI_SSID "fuji_AP"
-#define WIFI_PASS "SUyDABrJ"
-#define AGENT_IP "10.42.0.1"
-
-const uint16_t agent_port = 8888;
 
 
 Adafruit_BNO055 bno = Adafruit_BNO055(55);
@@ -119,8 +107,8 @@ void setup() {
   Serial.println(WiFi.localIP());
 
   // micro-ROS エージェントに接続
-  //set_microros_wifi_transports(ssid, password, agent_ip, agent_port);
-  set_microros_wifi_transports(WIFI_SSID, WIFI_PASS, AGENT_IP, agent_port);
+  //set_microros_wifi_transports(ssid, password, agent_ip, AGENT_PORT);
+  set_microros_wifi_transports(WIFI_SSID, WIFI_PASS, AGENT_IP, AGENT_PORT);
   delay(2000);
 
   // micro-ROS初期化

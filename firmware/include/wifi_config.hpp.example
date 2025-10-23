@@ -1,0 +1,9 @@
+// firmware/include/wifi_config.hpp.example
+// wifi_config.hppにコピーして使う
+#pragma once
+
+// ==== Template ====
+// #define WIFI_SSID "ENTER_YOUR_WIFI"
+// #define WIFI_PASS "ENTER_YOUR_PASSWORD"
+// #define AGENT_IP "192.168.0.xxx"
+// #define AGENT_PORT 8888
