@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 import rclpy
 from rclpy.node import Node
-from geometry_msgs.msg import PoseStamped, TransformStamped, Point, TwistStamped, Pose2D
+from geometry_msgs.msg import PoseStamped, TransformStamped, Point, TwistStamped, Pose2D, PoseWithCovarianceStamped
 from visualization_msgs.msg import Marker
 from tf2_ros import TransformBroadcaster
 import numpy as np
@@ -34,7 +34,7 @@ class PlaneMarkerNode(Node):
         self.create_subscription(PoseStamped, f"/aruco_single_{self.moving_id}/pose", self.moving_callback, 10)
 
         # Publisher
-        self.pose_pub = self.create_publisher(PoseStamped, "/moving_marker_pose", 10)
+        self.pose_pub = self.create_publisher(PoseWithCovarianceStamped, "/moving_marker_pose", 10)
         self.rect_pub = self.create_publisher(Marker, "/plane_rectangle", 10)
 
         # 位置姿勢/速度角速度のPublish用
@@ -162,16 +162,26 @@ class PlaneMarkerNode(Node):
         corrected_q = tf_transformations.quaternion_from_euler(0, 0, yaw)
 
         # --- Pose 出力 ---
-        pose_msg = PoseStamped()
+        pose_msg = PoseWithCovarianceStamped()
         pose_msg.header.stamp = self.get_clock().now().to_msg()
         pose_msg.header.frame_id = "plane_frame"
-        pose_msg.pose.position.x = local[0]
-        pose_msg.pose.position.y = local[1]
-        pose_msg.pose.position.z = local[2]
-        pose_msg.pose.orientation.x = corrected_q[0]
-        pose_msg.pose.orientation.y = corrected_q[1]
-        pose_msg.pose.orientation.z = corrected_q[2]
-        pose_msg.pose.orientation.w = corrected_q[3]
+        pose_msg.pose.pose.position.x = local[0]
+        pose_msg.pose.pose.position.y = local[1]
+        pose_msg.pose.pose.position.z = local[2]
+        pose_msg.pose.pose.orientation.x = corrected_q[0]
+        pose_msg.pose.pose.orientation.y = corrected_q[1]
+        pose_msg.pose.pose.orientation.z = corrected_q[2]
+        pose_msg.pose.pose.orientation.w = corrected_q[3]
+
+        pose_msg.pose.covariance = [
+            0.001, 0.0, 0.0, 0.0, 0.0, 0.0,
+            0.0, 0.001, 0.0, 0.0, 0.0, 0.0,
+            0.0, 0.0, 9999.0, 0.0, 0.0, 0.0,
+            0.0, 0.0, 0.0, 0.01, 0.0, 0.0,
+            0.0, 0.0, 0.0, 0.0, 0.01, 0.0,
+            0.0, 0.0, 0.0, 0.0, 0.0, 0.02
+        ]
+
 
         self.pose_pub.publish(pose_msg)
 
@@ -212,10 +222,10 @@ class PlaneMarkerNode(Node):
         t2 = TransformStamped()
         t2.header = pose_msg.header
         t2.child_frame_id = "moving_marker_frame"
-        t2.transform.translation.x = pose_msg.pose.position.x
-        t2.transform.translation.y = pose_msg.pose.position.y
-        t2.transform.translation.z = pose_msg.pose.position.z
-        t2.transform.rotation = pose_msg.pose.orientation
+        t2.transform.translation.x = pose_msg.pose.pose.position.x
+        t2.transform.translation.y = pose_msg.pose.pose.position.y
+        t2.transform.translation.z = pose_msg.pose.pose.position.z
+        t2.transform.rotation = pose_msg.pose.pose.orientation
         self.tf_broadcaster.sendTransform(t2)
 
         # --- 枠出力 ---

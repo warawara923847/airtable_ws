@@ -112,6 +112,7 @@ void setup() {
   // micro-ROS初期化
   allocator = rcl_get_default_allocator();
   rclc_support_init(&support, 0, NULL, &allocator);
+  rmw_uros_sync_session(1000);
   rclc_node_init_default(&node, "esp32_wifi_node", "/", &support);
 
   rclc_publisher_init_default(
@@ -220,7 +221,7 @@ void loop() {
     }
 
     unsigned long now = millis();
-    if (now -lastTime >= (unsigned long)(dt*1000)){
+    if (now -lastTime >= (unsigned long)(dt*1000.0f + 0.5f)){
       lastTime = now;
 
       float prev_theta = theta;

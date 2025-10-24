@@ -3,6 +3,14 @@
 /install/
 /log/
 
+# ROS2 bag files
+data/bags/*
+!data/bags/.keep
+
+#Experimental logs
+data/logs/*
+!data/logs/.keep
+
 # Colcon meta files
 .colcon*
 *.pyc

@@ -1,6 +1,6 @@
 import rclpy
 from rclpy.node import Node
-from geometry_msgs.msg import Vector3Stamped, QuaternionStamped, PoseStamped
+from geometry_msgs.msg import Vector3Stamped, QuaternionStamped, PoseStamped, PoseWithCovarianceStamped
 from sensor_msgs.msg import Imu
 from scipy.spatial.transform import Rotation as R
 import numpy as np
@@ -13,7 +13,7 @@ class ImuAlignNode(Node):
         self.create_subscription(Vector3Stamped, '/imu/gyro', self.gyro_callback, 10)
         self.create_subscription(Vector3Stamped, '/imu/accel', self.accel_callback, 10)
         self.create_subscription(Vector3Stamped, '/imu/euler', self.euler_callback, 10)
-        self.create_subscription(PoseStamped, '/moving_marker_pose', self.aruco_callback, 10)
+        self.create_subscription(PoseWithCovarianceStamped, '/moving_marker_pose', self.aruco_callback, 10)
 
         # Publisher
         self.pub = self.create_publisher(Imu, '/imu/aligned', 10)
@@ -44,14 +44,13 @@ class ImuAlignNode(Node):
         self.euler = msg.vector
         self.try_publish()
 
-    def aruco_callback(self, msg: PoseStamped):
+    def aruco_callback(self, msg: PoseWithCovarianceStamped):
         self.aruco_quat = R.from_quat([
-            msg.pose.orientation.x,
-            msg.pose.orientation.y,
-            msg.pose.orientation.z,
-            msg.pose.orientation.w
-        ])
-
+            msg.pose.pose.orientation.x,
+            msg.pose.pose.orientation.y,
+            msg.pose.pose.orientation.z,
+            msg.pose.pose.orientation.w
+        ]) 
 
         # 一度だけキャリブレーション実行
         if not self.calibration_done and self.euler is not None:
@@ -77,20 +76,43 @@ class ImuAlignNode(Node):
 
         imu_msg = Imu()
         imu_msg.header.stamp = self.get_clock().now().to_msg()
-        imu_msg.header.frame_id = 'base_link'
+        imu_msg.header.frame_id = 'plane_frame'
 
         imu_msg.orientation.x = quat[0]
         imu_msg.orientation.y = quat[1]
         imu_msg.orientation.z = quat[2]
         imu_msg.orientation.w = quat[3]
+        imu_msg.orientation_covariance = [
+            1e-3, 0.0, 0.0,
+            0.0, 1e-3, 0.0,
+            0.0, 0.0, 1e-3
+        ]
 
         imu_msg.angular_velocity.x = self.gyro.x
         imu_msg.angular_velocity.y = self.gyro.y
         imu_msg.angular_velocity.z = self.gyro.z
+        imu_msg.angular_velocity_covariance = [
+            1e-4, 0.0, 0.0,
+            0.0, 1e-4, 0.0,
+            0.0, 0.0, 1e-4
+        ]
 
         imu_msg.linear_acceleration.x = self.accel.x
         imu_msg.linear_acceleration.y = self.accel.y
-        imu_msg.linear_acceleration.z = self.accel.z
+        imu_msg.linear_acceleration.z = self.accel.z 
+        imu_msg.linear_acceleration_covariance = [
+            1e-3, 0.0, 0.0,
+            0.0, 1e-3, 0.0,
+            0.0, 0.0, 1e-3
+        ]     
+
+        # クォータニオンの正規化
+        norm = np.linalg.norm([imu_msg.orientation.x, imu_msg.orientation.y, imu_msg.orientation.z, imu_msg.orientation.w])
+        if norm > 0:
+            imu_msg.orientation.x /= norm
+            imu_msg.orientation.y /= norm
+            imu_msg.orientation.z /= norm
+            imu_msg.orientation.w /= norm
 
         self.pub.publish(imu_msg)
 
