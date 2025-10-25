@@ -11,7 +11,7 @@ def generate_launch_description():
                 name="ekf_filter_node",
                 output="screen",
                 parameters=[
-                    "/home/fujiitsu/ros2_ws/src/localization_pkg/config/ekf_debug.yaml"
+                    "/home/fujiitsu/ros2_ws/src/localization_pkg/config/ekf_simple.yaml"
                 ],
                 arguments=["--ros-args", "--log-level", "info"],
             )
