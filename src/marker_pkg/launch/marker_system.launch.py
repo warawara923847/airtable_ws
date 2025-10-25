@@ -1,6 +1,7 @@
 from launch import LaunchDescription
 from launch_ros.actions import Node
 
+
 def generate_launch_description():
     # マーカーのサイズ [m]
     marker_size = 0.075  # 例: 10cm
@@ -20,16 +21,18 @@ def generate_launch_description():
                 executable="single",
                 name=f"aruco_single_{mid}",
                 parameters=[
-                    {"marker_id": mid,
-                     "marker_size": marker_size,
-                     "camera_frame": "camera_color_optical_frame",
-                     "reference_frame": "camera_color_optical_frame",
-                     "marker_frame": f"aruco_marker_{mid}"}
+                    {
+                        "marker_id": mid,
+                        "marker_size": marker_size,
+                        "camera_frame": "camera_color_optical_frame",
+                        "reference_frame": "camera_color_optical_frame",
+                        "marker_frame": f"aruco_marker_{mid}",
+                    }
                 ],
                 remappings=[
                     ("/camera_info", "/camera/camera/color/camera_info"),
-                    ("/image", "/camera/camera/color/image_raw")
-                ]
+                    ("/image", "/camera/camera/color/image_raw"),
+                ],
             )
         )
 
@@ -40,16 +43,18 @@ def generate_launch_description():
             executable="single",
             name=f"aruco_single_{moving_id}",
             parameters=[
-                {"marker_id": moving_id,
-                 "marker_size": marker_size,
-                 "camera_frame": "camera_color_optical_frame",
-                 "reference_frame": "camera_color_optical_frame",
-                 "marker_frame": f"aruco_marker_{moving_id}"}
+                {
+                    "marker_id": moving_id,
+                    "marker_size": marker_size,
+                    "camera_frame": "camera_color_optical_frame",
+                    "reference_frame": "camera_color_optical_frame",
+                    "marker_frame": f"aruco_marker_{moving_id}",
+                }
             ],
             remappings=[
                 ("/camera_info", "/camera/camera/color/camera_info"),
-                ("/image", "/camera/camera/color/image_raw")
-            ]
+                ("/image", "/camera/camera/color/image_raw"),
+            ],
         )
     )
 
@@ -62,10 +67,9 @@ def generate_launch_description():
             parameters=[
                 {"plane_marker_ids": plane_ids},
                 {"moving_marker_id": moving_id},
-                {"height_offset": 0.157}  # 基準平面からの高さ[m]
-            ]
+                {"height_offset": 0.157},  # 基準平面からの高さ[m]
+            ],
         )
     )
 
     return LaunchDescription(nodes)
-

@@ -1,21 +1,41 @@
 #!/usr/bin/env python3
 import rclpy
 from rclpy.node import Node
-from geometry_msgs.msg import PoseStamped, TransformStamped, Point, TwistStamped, Pose2D, PoseWithCovarianceStamped
+from geometry_msgs.msg import (
+    PoseStamped,
+    TransformStamped,
+    Point,
+    TwistStamped,
+    Pose2D,
+    PoseWithCovarianceStamped,
+)
 from visualization_msgs.msg import Marker
 from tf2_ros import TransformBroadcaster
 import numpy as np
 import tf_transformations
 from collections import deque
 
+
 class PlaneMarkerNode(Node):
     def __init__(self):
-        super().__init__('plane_with_moving_marker')
+        super().__init__("plane_with_moving_marker")
 
         # パラメータ
-        self.fixed_ids = self.declare_parameter('fixed_marker_ids', [10, 11, 12, 13]).get_parameter_value().integer_array_value
-        self.moving_id = self.declare_parameter('moving_marker_id', 50).get_parameter_value().integer_value
-        self.offset_height = self.declare_parameter('offset_height', 0.1).get_parameter_value().double_value
+        self.fixed_ids = (
+            self.declare_parameter("fixed_marker_ids", [10, 11, 12, 13])
+            .get_parameter_value()
+            .integer_array_value
+        )
+        self.moving_id = (
+            self.declare_parameter("moving_marker_id", 50)
+            .get_parameter_value()
+            .integer_value
+        )
+        self.offset_height = (
+            self.declare_parameter("offset_height", 0.1)
+            .get_parameter_value()
+            .double_value
+        )
 
         # 固定マーカーの位置を保持
         self.fixed_poses = {}
@@ -28,13 +48,25 @@ class PlaneMarkerNode(Node):
         # サブスクライブ（固定マーカー）
         for mid in self.fixed_ids:
             topic = f"/aruco_single_{mid}/pose"
-            self.create_subscription(PoseStamped, topic, lambda msg, mid=mid: self.fixed_callback(msg, mid), 10)
+            self.create_subscription(
+                PoseStamped,
+                topic,
+                lambda msg, mid=mid: self.fixed_callback(msg, mid),
+                10,
+            )
 
         # サブスクライブ（可動マーカー）
-        self.create_subscription(PoseStamped, f"/aruco_single_{self.moving_id}/pose", self.moving_callback, 10)
+        self.create_subscription(
+            PoseStamped,
+            f"/aruco_single_{self.moving_id}/pose",
+            self.moving_callback,
+            10,
+        )
 
         # Publisher
-        self.pose_pub = self.create_publisher(PoseWithCovarianceStamped, "/moving_marker_pose", 10)
+        self.pose_pub = self.create_publisher(
+            PoseWithCovarianceStamped, "/moving_marker_pose", 10
+        )
         self.rect_pub = self.create_publisher(Marker, "/plane_rectangle", 10)
 
         # 位置姿勢/速度角速度のPublish用
@@ -51,19 +83,18 @@ class PlaneMarkerNode(Node):
 
     def fixed_callback(self, msg, mid):
         # マーカーが見えた時にだけ更新
-        self.fixed_poses[mid] = np.array([
-            msg.pose.position.x,
-            msg.pose.position.y,
-            msg.pose.position.z
-            ])
+        self.fixed_poses[mid] = np.array(
+            [msg.pose.position.x, msg.pose.position.y, msg.pose.position.z]
+        )
 
         # 初期化チェック（最初に4つ揃ったら初期化完了）
         if not self.initialized and len(self.fixed_poses) == len(self.fixed_ids):
             self.initialized = True
-            self.get_logger().info("All fixed markers detected, plane_frame initialized")
+            self.get_logger().info(
+                "All fixed markers detected, plane_frame initialized"
+            )
 
-    def publish_ideal_rectangle(self, frame_id="plane_frame",
-                                length=2.0, width=1.0):
+    def publish_ideal_rectangle(self, frame_id="plane_frame", length=2.0, width=1.0):
         marker = Marker()
         marker.header.frame_id = frame_id
         marker.header.stamp = self.get_clock().now().to_msg()
@@ -85,11 +116,11 @@ class PlaneMarkerNode(Node):
         half_l = length / 2.0
         half_w = width / 2.0
         corners = [
-                ( half_l,  half_w, 0.0),
-                (-half_l,  half_w, 0.0),
-                (-half_l, -half_w, 0.0),
-                ( half_l, -half_w, 0.0)
-                ]
+            (half_l, half_w, 0.0),
+            (-half_l, half_w, 0.0),
+            (-half_l, -half_w, 0.0),
+            (half_l, -half_w, 0.0),
+        ]
 
         for c in corners:
             pt = Point()
@@ -99,7 +130,6 @@ class PlaneMarkerNode(Node):
         marker.points.append(marker.points[0])
 
         self.rect_pub.publish(marker)
-
 
     def moving_callback(self, msg):
         if not self.initialized:
@@ -124,7 +154,7 @@ class PlaneMarkerNode(Node):
 
         # 座標系 (plane_frame)
         z_axis = normal
-        x_axis = (pts[1] - pts[0])
+        x_axis = pts[1] - pts[0]
         x_axis /= np.linalg.norm(x_axis)
         y_axis = np.cross(z_axis, x_axis)
         y_axis /= np.linalg.norm(y_axis)
@@ -157,7 +187,12 @@ class PlaneMarkerNode(Node):
         local[2] = self.offset_height
 
         # Yawのみ利用
-        q = [msg.pose.orientation.x, msg.pose.orientation.y, msg.pose.orientation.z, msg.pose.orientation.w]
+        q = [
+            msg.pose.orientation.x,
+            msg.pose.orientation.y,
+            msg.pose.orientation.z,
+            msg.pose.orientation.w,
+        ]
         _, _, yaw = tf_transformations.euler_from_quaternion(q)
         corrected_q = tf_transformations.quaternion_from_euler(0, 0, yaw)
 
@@ -174,14 +209,43 @@ class PlaneMarkerNode(Node):
         pose_msg.pose.pose.orientation.w = corrected_q[3]
 
         pose_msg.pose.covariance = [
-            0.001, 0.0, 0.0, 0.0, 0.0, 0.0,
-            0.0, 0.001, 0.0, 0.0, 0.0, 0.0,
-            0.0, 0.0, 9999.0, 0.0, 0.0, 0.0,
-            0.0, 0.0, 0.0, 0.01, 0.0, 0.0,
-            0.0, 0.0, 0.0, 0.0, 0.01, 0.0,
-            0.0, 0.0, 0.0, 0.0, 0.0, 0.02
+            0.001,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.001,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            9999.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.01,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.01,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.02,
         ]
-
 
         self.pose_pub.publish(pose_msg)
 
@@ -200,7 +264,7 @@ class PlaneMarkerNode(Node):
                 dx = pose2d.x - self.last_pose2d.x
                 dy = pose2d.y - self.last_pose2d.y
                 dyaw = yaw - self.last_pose2d.theta
-                dyaw = (dyaw + np.pi) % (2*np.pi) - np.pi
+                dyaw = (dyaw + np.pi) % (2 * np.pi) - np.pi
 
                 vx = dx / dt
                 vy = dy / dt
@@ -216,7 +280,6 @@ class PlaneMarkerNode(Node):
 
         self.last_time = now
         self.last_pose2d = pose2d
-
 
         # --- 可動マーカーのTFも出力 ---
         t2 = TransformStamped()
@@ -239,6 +302,6 @@ def main(args=None):
     node.destroy_node()
     rclpy.shutdown()
 
-if __name__ == '__main__':
-    main()
 
+if __name__ == "__main__":
+    main()
