@@ -1,65 +1,75 @@
 # localization_pkg/config/ekf.yaml
 ekf_filter_node:
   ros__parameters:
-    frequency: 30.0  # 更新レート [Hz]
-    sensor_timeout: 0.1
-    two_d_mode: true  # 2Dモード（Z軸とロール・ピッチを無視）
+    frequency: 30.0
+    sensor_timeout: 1.0
+    two_d_mode: false
 
-    # === フレーム定義 ===
-    map_frame: plane_frame
-    odom_frame: plane_frame
+    # === Frame definition (must be unique) ===
+    map_frame: map
+    odom_frame: odom
     base_link_frame: base_link
-    world_frame: plane_frame
+    world_frame: map
 
     # === 入力センサ ===
-    # Pose (from ArUco)
+    # Pose (from ArUco marker)
     pose0: /moving_marker_pose
-    pose0_config: [true, true, false,  # x, y, z（Zは固定平面なら無視）
-                   false, false, true,  # roll, pitch, yaw
+    pose0_config: [true, true, false,   # x, y, z
+                   false, false, true,   # roll, pitch, yaw (yaw only)
                    false, false, false, false, false, false, false, false, false]
     pose0_differential: false
     pose0_relative: false
     pose0_queue_size: 5
-    pose0_z: false
 
     # IMU
     imu0: /imu/aligned
-    imu0_config: [false, false, false,  # x, y, z
-                  true, true, true,      # roll, pitch, yaw
-                  false, false, false,   # vel
-                  false, false, true,      # angular velocity
-                  false, false, false]      # linear acceleration
+    imu0_config: [false, false, false,  # x, y, z (from pose)
+                  false, false, true,    # roll, pitch, yaw (yaw only)
+                  false, false, false,   # vx, vy, vz (not used)
+                  false, false, true,    # wx, wy, wz (wz only)
+                  false, false, false]   # ax, ay, az (not used)
     imu0_differential: false
-    imu0_remove_gravitational_acceleration: false
+    imu0_remove_gravitational_acceleration: true
     imu0_queue_size: 10
-    imu0_relative: false
 
-    # === ノイズパラメータ（調整推奨） ===
-    process_noise_covariance: [1e-2, 0.0, 0.0, 0.0, 0.0, 0.0,
-                           0.0, 1e-2, 0.0, 0.0, 0.0, 0.0,
-                           0.0, 0.0, 1e-2, 0.0, 0.0, 0.0,
-                           0.0, 0.0, 0.0, 1e-3, 0.0, 0.0,
-                           0.0, 0.0, 0.0, 0.0, 1e-3, 0.0,
-                           0.0, 0.0, 0.0, 0.0, 0.0, 1e-3]
+    # === Noise covariance ===
+    process_noise_covariance: [0.001, 0.0, 0.0, 0.0, 0.0, 0.0,
+                               0.0, 0.001, 0.0, 0.0, 0.0, 0.0,
+                               0.0, 0.0, 0.001, 0.0, 0.0, 0.0,
+                               0.0, 0.0, 0.0, 0.001, 0.0, 0.0,
+                               0.0, 0.0, 0.0, 0.0, 0.001, 0.0,
+                               0.0, 0.0, 0.0, 0.0, 0.0, 0.001]
 
-    imu0_orientation_covariance: [0.0025, 0.0, 0.0,
-                                  0.0, 0.0025, 0.0,
-                                  0.0, 0.0, 0.0025]
+    # Measurement covariance - ignore roll/pitch with large values
+    pose0_covariance: [0.01, 0.0, 0.0, 0.0, 0.0, 0.0,
+                       0.0, 0.01, 0.0, 0.0, 0.0, 0.0,
+                       0.0, 0.0, 100.0, 0.0, 0.0, 0.0,      # z (ignored, large variance)
+                       0.0, 0.0, 0.0, 100.0, 0.0, 0.0,      # roll (ignored)
+                       0.0, 0.0, 0.0, 0.0, 100.0, 0.0,      # pitch (ignored)
+                       0.0, 0.0, 0.0, 0.0, 0.0, 0.01]       # yaw
 
-    pose0_covariance: [0.001, 0.0, 0.0, 0.0, 0.0, 0.0,
-                       0.0, 0.001, 0.0, 0.0, 0.0, 0.0,
-                       0.0, 0.0, 1.0, 0.0, 0.0, 0.0,
-                       0.0, 0.0, 0.0, 0.01, 0.0, 0.0,
-                       0.0, 0.0, 0.0, 0.0, 0.01, 0.0,
-                       0.0, 0.0, 0.0, 0.0, 0.0, 0.01]
+    imu0_orientation_covariance: [100.0, 0.0, 0.0,
+                                  0.0, 100.0, 0.0,
+                                  0.0, 0.0, 0.01]
 
-    initial_state: [0.0, 0.0, 0.0,
-                    0.0, 0.0, 0.0,
-                    0.0, 0.0, 0.0,
-                    0.0, 0.0, 0.0,
-                    0.0, 0.0, 0.0]
+    imu0_angular_velocity_covariance: [100.0, 0.0, 0.0,
+                                       0.0, 100.0, 0.0,
+                                       0.0, 0.0, 0.01]
 
-    # === 出力 ===
+    # State initialization
+    initial_state: [0.0, 0.0, 0.0,     # x, y, z
+                    0.0, 0.0, 0.0,     # roll, pitch, yaw
+                    0.0, 0.0, 0.0,     # vx, vy, vz
+                    0.0, 0.0, 0.0,     # wx, wy, wz
+                    0.0, 0.0, 0.0]     # ax, ay, az
+
+    initial_estimate_covariance: [1.0, 0.0, 0.0, 0.0, 0.0, 0.0,
+                                  0.0, 1.0, 0.0, 0.0, 0.0, 0.0,
+                                  0.0, 0.0, 100.0, 0.0, 0.0, 0.0,
+                                  0.0, 0.0, 0.0, 100.0, 0.0, 0.0,
+                                  0.0, 0.0, 0.0, 0.0, 100.0, 0.0,
+                                  0.0, 0.0, 0.0, 0.0, 0.0, 1.0]
+
     publish_tf: true
     publish_odometry: true
     publish_acceleration: false

@@ -48,17 +48,17 @@ def launch_setup(context, *args, **kwargs):
         )
 
     # --- EKF node (robot_localization) ---
-    # ekf_launch = IncludeLaunchDescription(PythonLaunchDescriptionSource(
-    #     os.path.join(loc_pkg, 'launch', 'ekf_launch.py')
-    # ))
-    #
-    # # ✅ EKFを IMUノード起動後に数秒遅らせて起動
-    # delayed_ekf = TimerAction(
-    #     period=10.0,  # ←必要に応じて 3〜7秒 程度調整
-    #     actions=[ekf_launch]
-    # )
-    # actions.append(delayed_ekf)
-    #
+    ekf_launch = IncludeLaunchDescription(PythonLaunchDescriptionSource(
+        os.path.join(loc_pkg, 'launch', 'ekf_launch.py')
+    ))
+
+    # ✅ EKFを IMUノード起動後に数秒遅らせて起動
+    delayed_ekf = TimerAction(
+        period=5.0,  # IMU/ArUco初期化を待つ
+        actions=[ekf_launch]
+    )
+    actions.append(delayed_ekf)
+
     return actions
 
 

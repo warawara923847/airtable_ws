@@ -77,7 +77,7 @@ class PlaneMarkerNode(Node):
 
         self.last_time = None
         self.last_pose = None
-        self.last_quat = None
+        self.last_pose2d = None
 
         # TF Broadcaster
         self.tf_broadcaster = TransformBroadcaster(self)
@@ -223,22 +223,15 @@ class PlaneMarkerNode(Node):
         # Zを高さオフセットに置換
         local[2] = self.offset_height
 
-        # --- Orientation: convert incoming marker quaternion (camera frame)
-        # into the plane_frame quaternion and publish full quaternion.
-        q_cam = [
+        # Yawのみ利用
+        q = [
             msg.pose.orientation.x,
             msg.pose.orientation.y,
             msg.pose.orientation.z,
             msg.pose.orientation.w,
         ]
-
-        # Convert to rotation matrix, rotate into plane_frame and convert back
-        # to quaternion. initial_R maps plane_frame -> camera frame, so we
-        # pre-multiply by its transpose to go camera -> plane.
-        M_cam = tf_transformations.quaternion_matrix(q_cam)
-        M_plane = np.eye(4)
-        M_plane[:3, :3] = self.initial_R.T @ M_cam[:3, :3]
-        corrected_q = tf_transformations.quaternion_from_matrix(M_plane)
+        _, _, yaw = tf_transformations.euler_from_quaternion(q)
+        corrected_q = tf_transformations.quaternion_from_euler(0, 0, yaw)
 
         # --- Pose 出力 ---
         pose_msg = PoseWithCovarianceStamped()
@@ -252,57 +245,28 @@ class PlaneMarkerNode(Node):
         pose_msg.pose.pose.orientation.z = corrected_q[2]
         pose_msg.pose.pose.orientation.w = corrected_q[3]
 
+        # Covariance matrix [x, y, z, roll, pitch, yaw] (6x6)
+        # two_d_mode:true では Z, roll, pitch は無視される
+        # → 無視される軸には大きな値(無限大扱い)を設定
         pose_msg.pose.covariance = [
-            0.001,
-            0.0,
-            0.0,
-            0.0,
-            0.0,
-            0.0,
-            0.0,
-            0.001,
-            0.0,
-            0.0,
-            0.0,
-            0.0,
-            0.0,
-            0.0,
-            10.0,
-            0.0,
-            0.0,
-            0.0,
-            0.0,
-            0.0,
-            0.0,
-            0.01,
-            0.0,
-            0.0,
-            0.0,
-            0.0,
-            0.0,
-            0.0,
-            0.01,
-            0.0,
-            0.0,
-            0.0,
-            0.0,
-            0.0,
-            0.0,
-            0.02,
+            0.001, 0.0,   0.0,   0.0, 0.0, 0.0,     # x row
+            0.0,   0.001, 0.0,   0.0, 0.0, 0.0,     # y row
+            0.0,   0.0,   1e6,   0.0, 0.0, 0.0,     # z row (ignored)
+            0.0,   0.0,   0.0,   1e6, 0.0, 0.0,     # roll row (ignored)
+            0.0,   0.0,   0.0,   0.0, 1e6, 0.0,     # pitch row (ignored)
+            0.0,   0.0,   0.0,   0.0, 0.0, 0.01,    # yaw row
         ]
 
         self.pose_pub.publish(pose_msg)
 
-    # --- Pose2D出力 ---
-    # extract yaw from the plane-frame quaternion for compatibility
-    _, _, yaw = tf_transformations.euler_from_quaternion(corrected_q)
-    pose2d = Pose2D()
-    pose2d.x = local[0]
-    pose2d.y = local[1]
-    pose2d.theta = yaw
-    self.pose2d_pub.publish(pose2d)
+        # --- Pose2D出力 ---
+        pose2d = Pose2D()
+        pose2d.x = local[0]
+        pose2d.y = local[1]
+        pose2d.theta = yaw
+        self.pose2d_pub.publish(pose2d)
 
-    # --- 速度出力 ---
+        # --- 速度出力 ---
         now = self.get_clock().now()
         if self.last_time is not None and self.last_pose2d is not None:
             dt = (now - self.last_time).nanoseconds * 1e-9
@@ -312,50 +276,20 @@ class PlaneMarkerNode(Node):
                 dyaw = yaw - self.last_pose2d.theta
                 dyaw = (dyaw + np.pi) % (2 * np.pi) - np.pi
 
-        vx = dx / dt
-        vy = dy / dt
-        wz = dyaw / dt
+                vx = dx / dt
+                vy = dy / dt
+                wz = dyaw / dt
 
                 twist = TwistStamped()
                 twist.header.stamp = now.to_msg()
                 twist.header.frame_id = "plane_frame"
                 twist.twist.linear.x = vx
                 twist.twist.linear.y = vy
-
-                # Compute 3D angular velocity from quaternion difference
-                if self.last_quat is not None:
-                    q_prev = self.last_quat
-                    q_curr = corrected_q
-                    # q_delta = q_curr * conj(q_prev)
-                    q_prev_conj = tf_transformations.quaternion_conjugate(q_prev)
-                    q_delta = tf_transformations.quaternion_multiply(q_curr, q_prev_conj)
-
-                    # Ensure numerical stability
-                    qdw = np.clip(q_delta[3], -1.0, 1.0)
-                    angle = 2.0 * np.arccos(qdw)
-                    s = np.sqrt(1.0 - qdw * qdw)
-                    if s < 1e-6:
-                        # For very small angles, approximate axis by vector part
-                        axis = np.array([q_delta[0], q_delta[1], q_delta[2]])
-                    else:
-                        axis = np.array([q_delta[0], q_delta[1], q_delta[2]]) / s
-
-                    angular_vel = axis * (angle / dt)
-                    twist.twist.angular.x = float(angular_vel[0])
-                    twist.twist.angular.y = float(angular_vel[1])
-                    twist.twist.angular.z = float(angular_vel[2])
-                else:
-                    twist.twist.angular.x = 0.0
-                    twist.twist.angular.y = 0.0
-                    twist.twist.angular.z = wz
-
+                twist.twist.angular.z = wz
                 self.vel_pub.publish(twist)
 
-        # store lasts for next velocity computation
         self.last_time = now
         self.last_pose2d = pose2d
-        # quaternion in plane_frame
-        self.last_quat = corrected_q
 
         # --- 可動マーカーのTFも出力 ---
         t2 = TransformStamped()

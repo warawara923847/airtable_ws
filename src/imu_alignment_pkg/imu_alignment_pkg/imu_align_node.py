@@ -86,6 +86,10 @@ class ImuAlignNode(Node):
         """
         plane_frame → base_link のTFを一度だけ送信。
         ArUcoマーカー（plane_frame基準）とIMUの初期姿勢を同期させる。
+        
+        役割:
+        - IMU キャリブレーション直後の初期 TF を出力
+        - その後 EKF が動的に plane_frame → base_link を更新
         """
         if self.offset_rot is None:
             self.get_logger().warn("Offset rotation not computed yet, skipping TF.")
@@ -96,18 +100,23 @@ class ImuAlignNode(Node):
         t.header.frame_id = "plane_frame"
         t.child_frame_id = "base_link"
 
+        # ArUco から取得した位置を初期値として使用
         t.transform.translation.x = aruco_msg.pose.pose.position.x
         t.transform.translation.y = aruco_msg.pose.pose.position.y
         t.transform.translation.z = aruco_msg.pose.pose.position.z
 
-        q = self.offset_rot.as_quat() # x, y, z, w
+        # キャリブレーションされた姿勢（offset_rot）を使用
+        q = self.offset_rot.as_quat()  # x, y, z, w
         t.transform.rotation.x = q[0]
         t.transform.rotation.y = q[1]
         t.transform.rotation.z = q[2]
         t.transform.rotation.w = q[3]
 
         self.tf_broadcaster.sendTransform(t)
-        self.get_logger().info("Published plane_frame → base_link TF (aligned).")
+        self.get_logger().info(
+            "✅ Published initial plane_frame → base_link TF. "
+            "EKF will now update it dynamically."
+        )
 
     # --- Main publishing logic ----------------------------------------
 
