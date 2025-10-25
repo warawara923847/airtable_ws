@@ -58,6 +58,7 @@ float dt = 0.02; // 制御周期 [s]
 float gain = 30000; // PWMスケーリング
 
 unsigned long lastTime = 0;
+unsigned int fail_count = 0; // IMU再起動用
 
 float unwrap_angle(float prev, float current) {
   float diff = current - prev;
@@ -107,7 +108,13 @@ void setup() {
 
   // micro-ROS エージェントに接続
   set_microros_wifi_transports(WIFI_SSID, WIFI_PASS, AGENT_IP, AGENT_PORT);
-  delay(2000);
+
+  while(rmw_uros_ping_agent(1000, 5) != RMW_RET_OK){
+      Serial.println("Waiting for micro-ROS agent...");
+      delay(2000);
+  }
+
+  Serial.println("Connected to micro-ROS agent!");
 
   // micro-ROS初期化
   allocator = rcl_get_default_allocator();
@@ -172,6 +179,17 @@ void setup() {
 }
 
 void loop() {
+  if (rmw_uros_ping_agent(500, 1) != RMW_RET_OK) {
+    fail_count++;
+    if (fail_count > 3) {
+        Serial.println("Agent unreachable, restarting ESP...");
+        delay(100);
+        ESP.restart();
+    }
+  } else {
+    fail_count = 0;
+  }
+
   rclc_executor_spin_some(&executor, RCL_MS_TO_NS(10));
   if (pid_enabled) {
     // put your main code here, to run repeatedly:

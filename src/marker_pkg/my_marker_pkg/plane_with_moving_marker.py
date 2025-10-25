@@ -19,6 +19,8 @@ from collections import deque
 class PlaneMarkerNode(Node):
     def __init__(self):
         super().__init__("plane_with_moving_marker")
+        self.tf_braodcaster = TransformBroadcaster(self)
+        self.static_tf_broadcaster = TransformBroadcaster(self)
 
         # パラメータ
         self.fixed_ids = (
@@ -75,11 +77,63 @@ class PlaneMarkerNode(Node):
 
         self.last_time = None
         self.last_pose = None
+        self.last_quat = None
 
         # TF Broadcaster
         self.tf_broadcaster = TransformBroadcaster(self)
 
+        # --- 初期化状態管理 ---
+        self.initialized = False
+        self.base_initialized = False
+        self.initial_centroid = None
+        self.initial_q_plane = None
+
+        # --- 各種pose記録 ---
+        self.fixed_poses = {}
+        self.moving_marker_pose = None
+
         self.get_logger().info("PlaneMarkerNode started")
+
+    def initialize_plane_frame(self):
+        pts = np.array(list(self.fixed_poses.values()))
+        centroid = np.mean(pts, axis=0)
+        v1 = pts[1] - pts[0]
+        v2 = pts[2] - pts[0]
+        normal = np.cross(v1, v2)
+        normal /= np.linalg.norm(normal)
+
+        z_axis = normal
+        x_axis = pts[1] - pts[0]
+        x_axis /= np.linalg.norm(x_axis)
+        y_axis = np.cross(z_axis, x_axis)
+        y_axis /= np.linalg.norm(y_axis)
+        R = np.vstack([x_axis, y_axis, z_axis]).T
+
+        M = np.eye(4)
+        M[:3, :3] = R
+        q_plane = tf_transformations.quaternion_from_matrix(M)
+
+        self.initial_R = R
+        self.initial_centroid = centroid
+        self.initial_q_plane = q_plane
+        self.initialized = True
+
+        self.get_logger().info("plane_frame initialized")
+        return True
+
+    def publish_plane_tf(self):
+        t = TransformStamped()
+        t.header.stamp = self.get_clock().now().to_msg()
+        t.header.frame_id = "camera_color_optical_frame"
+        t.child_frame_id = "plane_frame"
+        t.transform.translation.x = self.initial_centroid[0]
+        t.transform.translation.y = self.initial_centroid[1]
+        t.transform.translation.z = self.initial_centroid[2]
+        t.transform.rotation.x = self.initial_q_plane[0]
+        t.transform.rotation.y = self.initial_q_plane[1]
+        t.transform.rotation.z = self.initial_q_plane[2]
+        t.transform.rotation.w = self.initial_q_plane[3]
+        self.tf_broadcaster.sendTransform(t)
 
     def fixed_callback(self, msg, mid):
         # マーカーが見えた時にだけ更新
@@ -89,10 +143,14 @@ class PlaneMarkerNode(Node):
 
         # 初期化チェック（最初に4つ揃ったら初期化完了）
         if not self.initialized and len(self.fixed_poses) == len(self.fixed_ids):
-            self.initialized = True
             self.get_logger().info(
                 "All fixed markers detected, plane_frame initialized"
             )
+            success = self.initialize_plane_frame()
+            if success:
+                self.initialized = True
+            else:
+                self.get_logger().warn("Failed to initialize plane_frame")
 
     def publish_ideal_rectangle(self, frame_id="plane_frame", length=2.0, width=1.0):
         marker = Marker()
@@ -131,70 +189,56 @@ class PlaneMarkerNode(Node):
 
         self.rect_pub.publish(marker)
 
+    # --- base_link初期化 ---
+    def initialize_base_link(self, msg: PoseStamped):
+        t = TransformStamped()
+        t.header.stamp = self.get_clock().now().to_msg()
+        t.header.frame_id = "plane_frame"
+        t.child_frame_id = "base_link"
+        t.transform.translation.x = msg.pose.position.x
+        t.transform.translation.y = msg.pose.position.y
+        t.transform.translation.z = msg.pose.position.z
+        t.transform.rotation = msg.pose.orientation
+        self.static_tf_broadcaster.sendTransform(t)
+
+        self.get_logger().info("Initialized base_link at moving marker pose origin.")
+
     def moving_callback(self, msg):
         if not self.initialized:
             self.get_logger().warn("Waiting for all fixed markers (initialization)")
             return
 
-        # --- 平面計算（保持値も利用） ---
-        pts = np.array(list(self.fixed_poses.values()))
-        centroid = np.mean(pts, axis=0)
-        v1 = pts[1] - pts[0]
-        v2 = pts[2] - pts[0]
-        normal = np.cross(v1, v2)
-        normal /= np.linalg.norm(normal)
+        # 初回受信時にbase_link初期化
+        # if not self.base_initialized:
+        #     self.initialize_base_link(msg)
+        #     self.base_initialized = True
 
-        # 移動平均で安定化
-        self.normal_history.append(normal)
-        self.centroid_history.append(centroid)
-
-        normal = np.mean(self.normal_history, axis=0)
-        normal /= np.linalg.norm(normal)
-        centroid = np.mean(self.centroid_history, axis=0)
-
-        # 座標系 (plane_frame)
-        z_axis = normal
-        x_axis = pts[1] - pts[0]
-        x_axis /= np.linalg.norm(x_axis)
-        y_axis = np.cross(z_axis, x_axis)
-        y_axis /= np.linalg.norm(y_axis)
-        R = np.vstack([x_axis, y_axis, z_axis]).T
-
-        # --- plane_frame の TF 出力 ---
-        M = np.eye(4)
-        M[:3, :3] = R
-        q_plane = tf_transformations.quaternion_from_matrix(M)
-
-        t = TransformStamped()
-        t.header.stamp = self.get_clock().now().to_msg()
-        t.header.frame_id = "camera_color_optical_frame"
-        t.child_frame_id = "plane_frame"
-        t.transform.translation.x = centroid[0]
-        t.transform.translation.y = centroid[1]
-        t.transform.translation.z = centroid[2]
-        t.transform.rotation.x = q_plane[0]
-        t.transform.rotation.y = q_plane[1]
-        t.transform.rotation.z = q_plane[2]
-        t.transform.rotation.w = q_plane[3]
-        self.tf_broadcaster.sendTransform(t)
+        self.publish_plane_tf()
 
         # --- 可動マーカー処理 ---
         pm = np.array([msg.pose.position.x, msg.pose.position.y, msg.pose.position.z])
-        relative = pm - centroid
-        local = R.T @ relative
+        relative = pm - self.initial_centroid
+        local = self.initial_R.T @ relative
 
         # Zを高さオフセットに置換
         local[2] = self.offset_height
 
-        # Yawのみ利用
-        q = [
+        # --- Orientation: convert incoming marker quaternion (camera frame)
+        # into the plane_frame quaternion and publish full quaternion.
+        q_cam = [
             msg.pose.orientation.x,
             msg.pose.orientation.y,
             msg.pose.orientation.z,
             msg.pose.orientation.w,
         ]
-        _, _, yaw = tf_transformations.euler_from_quaternion(q)
-        corrected_q = tf_transformations.quaternion_from_euler(0, 0, yaw)
+
+        # Convert to rotation matrix, rotate into plane_frame and convert back
+        # to quaternion. initial_R maps plane_frame -> camera frame, so we
+        # pre-multiply by its transpose to go camera -> plane.
+        M_cam = tf_transformations.quaternion_matrix(q_cam)
+        M_plane = np.eye(4)
+        M_plane[:3, :3] = self.initial_R.T @ M_cam[:3, :3]
+        corrected_q = tf_transformations.quaternion_from_matrix(M_plane)
 
         # --- Pose 出力 ---
         pose_msg = PoseWithCovarianceStamped()
@@ -223,7 +267,7 @@ class PlaneMarkerNode(Node):
             0.0,
             0.0,
             0.0,
-            9999.0,
+            10.0,
             0.0,
             0.0,
             0.0,
@@ -249,14 +293,16 @@ class PlaneMarkerNode(Node):
 
         self.pose_pub.publish(pose_msg)
 
-        # --- Pose2D出力 ---
-        pose2d = Pose2D()
-        pose2d.x = local[0]
-        pose2d.y = local[1]
-        pose2d.theta = yaw
-        self.pose2d_pub.publish(pose2d)
+    # --- Pose2D出力 ---
+    # extract yaw from the plane-frame quaternion for compatibility
+    _, _, yaw = tf_transformations.euler_from_quaternion(corrected_q)
+    pose2d = Pose2D()
+    pose2d.x = local[0]
+    pose2d.y = local[1]
+    pose2d.theta = yaw
+    self.pose2d_pub.publish(pose2d)
 
-        # --- 速度出力 ---
+    # --- 速度出力 ---
         now = self.get_clock().now()
         if self.last_time is not None and self.last_pose2d is not None:
             dt = (now - self.last_time).nanoseconds * 1e-9
@@ -266,20 +312,50 @@ class PlaneMarkerNode(Node):
                 dyaw = yaw - self.last_pose2d.theta
                 dyaw = (dyaw + np.pi) % (2 * np.pi) - np.pi
 
-                vx = dx / dt
-                vy = dy / dt
-                wz = dyaw / dt
+        vx = dx / dt
+        vy = dy / dt
+        wz = dyaw / dt
 
                 twist = TwistStamped()
                 twist.header.stamp = now.to_msg()
                 twist.header.frame_id = "plane_frame"
                 twist.twist.linear.x = vx
                 twist.twist.linear.y = vy
-                twist.twist.angular.z = wz
+
+                # Compute 3D angular velocity from quaternion difference
+                if self.last_quat is not None:
+                    q_prev = self.last_quat
+                    q_curr = corrected_q
+                    # q_delta = q_curr * conj(q_prev)
+                    q_prev_conj = tf_transformations.quaternion_conjugate(q_prev)
+                    q_delta = tf_transformations.quaternion_multiply(q_curr, q_prev_conj)
+
+                    # Ensure numerical stability
+                    qdw = np.clip(q_delta[3], -1.0, 1.0)
+                    angle = 2.0 * np.arccos(qdw)
+                    s = np.sqrt(1.0 - qdw * qdw)
+                    if s < 1e-6:
+                        # For very small angles, approximate axis by vector part
+                        axis = np.array([q_delta[0], q_delta[1], q_delta[2]])
+                    else:
+                        axis = np.array([q_delta[0], q_delta[1], q_delta[2]]) / s
+
+                    angular_vel = axis * (angle / dt)
+                    twist.twist.angular.x = float(angular_vel[0])
+                    twist.twist.angular.y = float(angular_vel[1])
+                    twist.twist.angular.z = float(angular_vel[2])
+                else:
+                    twist.twist.angular.x = 0.0
+                    twist.twist.angular.y = 0.0
+                    twist.twist.angular.z = wz
+
                 self.vel_pub.publish(twist)
 
+        # store lasts for next velocity computation
         self.last_time = now
         self.last_pose2d = pose2d
+        # quaternion in plane_frame
+        self.last_quat = corrected_q
 
         # --- 可動マーカーのTFも出力 ---
         t2 = TransformStamped()

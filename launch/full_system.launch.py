@@ -1,9 +1,10 @@
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument, OpaqueFunction, IncludeLaunchDescription
+from launch.actions import DeclareLaunchArgument, OpaqueFunction, IncludeLaunchDescription, TimerAction
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration
 from ament_index_python.packages import get_package_share_directory
 import os
+
 
 def launch_setup(context, *args, **kwargs):
     use_camera = LaunchConfiguration('use_camera').perform(context)
@@ -17,6 +18,7 @@ def launch_setup(context, *args, **kwargs):
 
     actions = []
 
+    # --- RealSense camera ---
     if use_camera == 'true':
         actions.append(
             IncludeLaunchDescription(PythonLaunchDescriptionSource(
@@ -24,18 +26,20 @@ def launch_setup(context, *args, **kwargs):
             ))
         )
 
+    # --- ESP32 joystick bridge ---
     actions.append(
         IncludeLaunchDescription(PythonLaunchDescriptionSource(
             os.path.join(joy_pkg, 'launch', 'joy_esp_system.launch.py')
         ))
     )
 
-    actions.append(
-        IncludeLaunchDescription(PythonLaunchDescriptionSource(
-            os.path.join(imu_pkg, 'launch', 'imu_align.launch.py')
-        ))
-    )
+    # --- IMU alignment node (plane_frame → base_link TF発行) ---
+    imu_launch = IncludeLaunchDescription(PythonLaunchDescriptionSource(
+        os.path.join(imu_pkg, 'launch', 'imu_align.launch.py')
+    ))
+    actions.append(imu_launch)
 
+    # --- ArUco marker detection system ---
     if use_marker == 'true':
         actions.append(
             IncludeLaunchDescription(PythonLaunchDescriptionSource(
@@ -43,12 +47,18 @@ def launch_setup(context, *args, **kwargs):
             ))
         )
 
-    actions.append(
-        IncludeLaunchDescription(PythonLaunchDescriptionSource(
-            os.path.join(loc_pkg, 'launch', 'ekf_launch.py')
-        ))
-    )
-
+    # --- EKF node (robot_localization) ---
+    # ekf_launch = IncludeLaunchDescription(PythonLaunchDescriptionSource(
+    #     os.path.join(loc_pkg, 'launch', 'ekf_launch.py')
+    # ))
+    #
+    # # ✅ EKFを IMUノード起動後に数秒遅らせて起動
+    # delayed_ekf = TimerAction(
+    #     period=10.0,  # ←必要に応じて 3〜7秒 程度調整
+    #     actions=[ekf_launch]
+    # )
+    # actions.append(delayed_ekf)
+    #
     return actions
 
 

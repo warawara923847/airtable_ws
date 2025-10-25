@@ -5,7 +5,10 @@ from geometry_msgs.msg import (
     QuaternionStamped,
     PoseStamped,
     PoseWithCovarianceStamped,
+    TransformStamped,
 )
+from tf2_ros import TransformBroadcaster
+import tf_transformations
 from sensor_msgs.msg import Imu
 from scipy.spatial.transform import Rotation as R
 import numpy as np
@@ -25,6 +28,9 @@ class ImuAlignNode(Node):
 
         # Publisher
         self.pub = self.create_publisher(Imu, "/imu/aligned", 10)
+
+        # TF Broadcaster
+        self.tf_broadcaster = TransformBroadcaster(self)
 
         # Data storage
         self.gyro = None
@@ -73,6 +79,36 @@ class ImuAlignNode(Node):
                 "✅ IMU Yaw alignment calibrated using ArUco orientation"
             )
 
+            self.publish_plane_to_base_tf(msg)
+
+    # --- TF Publishing -------------------------------------------------
+    def publish_plane_to_base_tf(self, aruco_msg: PoseWithCovarianceStamped):
+        """
+        plane_frame → base_link のTFを一度だけ送信。
+        ArUcoマーカー（plane_frame基準）とIMUの初期姿勢を同期させる。
+        """
+        if self.offset_rot is None:
+            self.get_logger().warn("Offset rotation not computed yet, skipping TF.")
+            return
+        
+        t = TransformStamped()
+        t.header.stamp = self.get_clock().now().to_msg()
+        t.header.frame_id = "plane_frame"
+        t.child_frame_id = "base_link"
+
+        t.transform.translation.x = aruco_msg.pose.pose.position.x
+        t.transform.translation.y = aruco_msg.pose.pose.position.y
+        t.transform.translation.z = aruco_msg.pose.pose.position.z
+
+        q = self.offset_rot.as_quat() # x, y, z, w
+        t.transform.rotation.x = q[0]
+        t.transform.rotation.y = q[1]
+        t.transform.rotation.z = q[2]
+        t.transform.rotation.w = q[3]
+
+        self.tf_broadcaster.sendTransform(t)
+        self.get_logger().info("Published plane_frame → base_link TF (aligned).")
+
     # --- Main publishing logic ----------------------------------------
 
     def try_publish(self):
@@ -92,7 +128,7 @@ class ImuAlignNode(Node):
 
         imu_msg = Imu()
         imu_msg.header.stamp = self.get_clock().now().to_msg()
-        imu_msg.header.frame_id = "plane_frame"
+        imu_msg.header.frame_id = "base_link"
 
         imu_msg.orientation.x = quat[0]
         imu_msg.orientation.y = quat[1]

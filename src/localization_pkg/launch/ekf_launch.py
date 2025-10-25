@@ -13,6 +13,7 @@ def generate_launch_description():
                 parameters=[
                     "/home/fujiitsu/ros2_ws/src/localization_pkg/config/ekf.yaml"
                 ],
+                arguments=["--ros-args", "--log-level", "debug"],
             )
         ]
     )
