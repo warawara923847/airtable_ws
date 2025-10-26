@@ -22,7 +22,7 @@ ekf_filter_node:
                   false, false, true,
                   false, false, false,
                   false, false, true,
-                  false, false, false]
+                  true, true, false]
     imu0_differential: false
     imu0_remove_gravitational_acceleration: false
 
