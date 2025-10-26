@@ -11,6 +11,13 @@ data/bags/*
 data/logs/*
 !data/logs/.keep
 
+# micro-ROS generated files
+uros/
+
+# Auto-generated dependency lists
+ros2.repos
+*.repos
+
 # Colcon meta files
 .colcon*
 *.pyc

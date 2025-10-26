@@ -1,3 +1,6 @@
 [submodule "src/aruco_ros"]
 	path = src/aruco_ros
 	url = https://github.com/pal-robotics/aruco_ros.git
+[submodule "src/micro_ros"]
+	path = src/micro_ros
+	url = https://github.com/micro-ROS/micro_ros_setup.git
