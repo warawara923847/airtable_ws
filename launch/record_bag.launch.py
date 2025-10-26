@@ -27,7 +27,23 @@ def generate_launch_description():
         cmd = [
             'ros2', 'bag', 'record',
             '-o', bag_dir,
-            '-a', '--include-hidden-topics'
+            '/aruco_single_10/pose',
+            '/aruco_single_11/pose',
+            '/aruco_single_12/pose',
+            '/aruco_single_13/pose',
+            '/aruco_single_50/pose',
+            '/aruco_single_10/marker',
+            '/aruco_single_11/marker',
+            '/aruco_single_12/marker',
+            '/aruco_single_13/marker',
+            '/aruco_single_50/marker',
+            '/aruco_single_50/result',
+            '/imu/aligned',
+            '/moving_marker_pose',
+            '/plane_rectangle', # ArUco検出平面の四隅(rviz用)
+            '/odometry/filtered',
+            '/servo/cmd',
+            '/tf', '/tf_static'
         ]
 
         # Register cleanup to write summary.yaml when launch ends
