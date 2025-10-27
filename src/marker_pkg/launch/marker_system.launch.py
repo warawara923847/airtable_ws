@@ -67,8 +67,8 @@ def generate_launch_description():
             parameters=[
                 {"plane_marker_ids": plane_ids},
                 {"moving_marker_id": moving_id},
-                # {"height_offset": 0.157},  # 基準平面からの高さ[m]
-                {"height_offset": 0.0}, # デバッグ用
+                {"height_offset": 0.147},  # 基準平面からの高さ[m]
+                # {"height_offset": 0.0}, # デバッグ用
             ],
         )
     )
