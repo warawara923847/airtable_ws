@@ -35,55 +35,65 @@ class ImuAlignNode(Node):
         # Data storage
         self.gyro = None
         self.accel = None
-        self.euler = None
-        self.euler_timestamp = None  # eulerデータの鮮度確認用
+        self.euler = None  # Vector3Stamped メッセージ全体を保存
         self.aruco_quat = None
         self.offset_rot = None
-        self.last_aruco_msg = None  # 診断用に最新のArUcoメッセージを保持
+        self.last_aruco_quat = None  # 診断用：最新のArUco姿勢を保持
 
         # Parameters
         self.calibration_done = False
-        self._last_log_time = 0
         self._last_diagnostic_time = 0
-        self.euler_is_degrees = None  # IMU Eulerが度かラジアンか自動検出
+        
+        # デバッグ：コールバック呼び出しカウンタ
+        self._euler_callback_count = 0
+        self._last_euler_value = None
+        self._last_callback_report_time = 0
+        self._last_data_status_report_time = 0  # データ到着状況のレポート用
+        self._euler_total_callbacks = 0  # 起動からの総コールバック数
+        self._publish_count = 0  # /imu/aligned の publish 回数
 
-        self.get_logger().info("IMU Alignment Node (Yaw Calibration Ver.) started ✅")
+        self.get_logger().info("IMU Alignment Node started ✅")
 
     # --- Callbacks -----------------------------------------------------
 
     def gyro_callback(self, msg: Vector3Stamped):
-        self.gyro = msg.vector
+        self.gyro = msg  # メッセージ全体を保存
         self.try_publish()
 
     def accel_callback(self, msg: Vector3Stamped):
-        self.accel = msg.vector
+        self.accel = msg  # メッセージ全体を保存
         self.try_publish()
 
     def euler_callback(self, msg: Vector3Stamped):
-        # IMU Eulerが度かラジアンか自動検出（初回のみ）
-        if self.euler_is_degrees is None:
-            max_val = max(abs(msg.vector.x), abs(msg.vector.y), abs(msg.vector.z))
-            if max_val > 3.15:  # πより大きければ度と判定
-                self.euler_is_degrees = True
-                self.get_logger().warn(
-                    f"⚠️ IMU Euler appears to be in DEGREES (max value: {max_val:.2f}). "
-                    "Will convert to radians."
-                )
-            else:
-                self.euler_is_degrees = False
-                self.get_logger().info("✅ IMU Euler detected as RADIANS")
+        self._euler_total_callbacks += 1
         
-        # 度の場合はラジアンに変換
-        if self.euler_is_degrees:
-            self.euler = type(msg.vector)(
-                x=np.deg2rad(msg.vector.x),
-                y=np.deg2rad(msg.vector.y),
-                z=np.deg2rad(msg.vector.z)
+        # 角度を -π ~ π の範囲に正規化してメッセージ全体を保存
+        from geometry_msgs.msg import Vector3Stamped as V3S
+        normalized_msg = V3S()
+        normalized_msg.header = msg.header  # タイムスタンプを保持
+        normalized_msg.vector.x = np.arctan2(np.sin(msg.vector.x), np.cos(msg.vector.x))
+        normalized_msg.vector.y = np.arctan2(np.sin(msg.vector.y), np.cos(msg.vector.y))
+        normalized_msg.vector.z = np.arctan2(np.sin(msg.vector.z), np.cos(msg.vector.z))
+        self.euler = normalized_msg
+        
+        # デバッグ：euler値が実際に変化しているか確認（5秒おき）
+        self._euler_callback_count += 1
+        now = self.get_clock().now().nanoseconds
+        if now - self._last_callback_report_time > 5 * 1e9:
+            euler_changed = "CHANGED" if self._last_euler_value is None or \
+                (abs(self.euler.vector.x - self._last_euler_value.x) > 0.01 or \
+                 abs(self.euler.vector.y - self._last_euler_value.y) > 0.01 or \
+                 abs(self.euler.vector.z - self._last_euler_value.z) > 0.01) else "STATIC"
+            self.get_logger().info(
+                f"📊 IMU euler callbacks: {self._euler_callback_count} in last ~5s, "
+                f"current=(x:{self.euler.vector.x:.3f}, y:{self.euler.vector.y:.3f}, z:{self.euler.vector.z:.3f}), "
+                f"status={euler_changed}"
             )
-        else:
-            self.euler = msg.vector
+            from geometry_msgs.msg import Vector3
+            self._last_euler_value = Vector3(x=self.euler.vector.x, y=self.euler.vector.y, z=self.euler.vector.z)
+            self._euler_callback_count = 0
+            self._last_callback_report_time = now
         
-        self.euler_timestamp = msg.header.stamp  # タイムスタンプを記録
         self.try_publish()
 
     def aruco_callback(self, msg: PoseWithCovarianceStamped):
@@ -95,52 +105,46 @@ class ImuAlignNode(Node):
                 msg.pose.pose.orientation.w,
             ]
         )
-        self.last_aruco_msg = msg  # 診断用に保存
+        self.last_aruco_quat = self.aruco_quat  # 診断用に保存
 
         # 一度だけキャリブレーション実行
         if not self.calibration_done and self.euler is not None:
-            # IMU Eulerがゼロの場合は警告（初期化されていない可能性）
-            euler_magnitude = np.sqrt(self.euler.x**2 + self.euler.y**2 + self.euler.z**2)
-            if euler_magnitude < 0.01:  # ほぼゼロ
+            # 起動直後の不安定なデータをスキップ（最初の10メッセージ）
+            # if self._euler_total_callbacks < 10:
+            #     self.get_logger().warn(
+            #         f"⚠️ IMU initializing ({self._euler_total_callbacks}/10 messages), skipping calibration"
+            #     )
+            #     return
+
+            # ゼロ値チェック：IMU が初期化中の場合はスキップ
+            if abs(self.euler.vector.x) < 0.001 and abs(self.euler.vector.y) < 0.001 and abs(self.euler.vector.z) < 0.001:
                 self.get_logger().warn(
-                    f"⚠️ Deferring calibration: IMU euler is zero or near-zero "
-                    f"({self.euler.x:.3f}, {self.euler.y:.3f}, {self.euler.z:.3f}). "
-                    f"Waiting for valid IMU data..."
+                    "⚠️ IMU euler is zero (sensor initializing), skipping calibration"
                 )
                 return
             
-            # IMU Eulerデータの鮮度を確認（ArUcoより古いデータでキャリブレーションしない）
-            if self.euler_timestamp is not None:
-                aruco_stamp_ns = msg.header.stamp.sec * 1e9 + msg.header.stamp.nanosec
-                euler_stamp_ns = self.euler_timestamp.sec * 1e9 + self.euler_timestamp.nanosec
-                age_diff = (aruco_stamp_ns - euler_stamp_ns) / 1e9
-                
-                # IMU Eulerが ArUco より 0.5秒以上古い場合はキャリブレーションを延期
-                if age_diff > 0.5:
-                    self.get_logger().warn(
-                        f"⚠️ Deferring calibration: IMU euler is {age_diff:.2f}s older than ArUco. "
-                        f"Waiting for fresh IMU data..."
-                    )
-                    return
-            
-            # Vector3: x=roll, y=pitch, z=yaw
-            # from_euler("xyz") expects [roll, pitch, yaw]
+            # ESP32 の /imu/euler の軸定義:
+            #   euler.x = yaw (Z軸周り回転)
+            #   euler.y = roll (X軸周り回転)
+            #   euler.z = pitch (Y軸周り回転)
+            # ※ ROS標準(x=roll, y=pitch, z=yaw)とは異なる順序
             imu_rot = R.from_euler(
-                "xyz", [self.euler.x, self.euler.y, self.euler.z]
-            )
+                "zyx", [self.euler.vector.x, self.euler.vector.z, self.euler.vector.y]
+            )  # yaw, pitch, roll の順
             self.offset_rot = self.aruco_quat * imu_rot.inv()
             self.calibration_done = True
             
-            # 診断: キャリブレーション時の角度を出力
-            aruco_euler = self.aruco_quat.as_euler('xyz')  # roll, pitch, yaw
-            imu_euler_rad = [self.euler.x, self.euler.y, self.euler.z]
+            # 詳細なキャリブレーション情報を出力
+            aruco_euler = self.aruco_quat.as_euler('zyx')  # yaw, pitch, roll
+            imu_euler = imu_rot.as_euler('zyx')
             self.get_logger().info(
-                f"✅ IMU Yaw alignment calibrated:\n"
-                f"  ArUco angles (r,p,y): ({aruco_euler[0]:.3f}, {aruco_euler[1]:.3f}, {aruco_euler[2]:.3f}) rad = "
-                f"({np.rad2deg(aruco_euler[0]):.1f}, {np.rad2deg(aruco_euler[1]):.1f}, {np.rad2deg(aruco_euler[2]):.1f}) deg\n"
-                f"  IMU angles (r,p,y):   ({imu_euler_rad[0]:.3f}, {imu_euler_rad[1]:.3f}, {imu_euler_rad[2]:.3f}) rad = "
-                f"({np.rad2deg(imu_euler_rad[0]):.1f}, {np.rad2deg(imu_euler_rad[1]):.1f}, {np.rad2deg(imu_euler_rad[2]):.1f}) deg\n"
-                f"  Yaw difference: {np.rad2deg(aruco_euler[2] - imu_euler_rad[2]):.1f} deg"
+                f"✅ IMU alignment calibrated:\n"
+                f"  ArUco orientation (yaw, pitch, roll): "
+                f"({np.rad2deg(aruco_euler[0]):.1f}°, {np.rad2deg(aruco_euler[1]):.1f}°, {np.rad2deg(aruco_euler[2]):.1f}°)\n"
+                f"  IMU orientation (yaw, pitch, roll): "
+                f"({np.rad2deg(imu_euler[0]):.1f}°, {np.rad2deg(imu_euler[1]):.1f}°, {np.rad2deg(imu_euler[2]):.1f}°)\n"
+                f"  Raw IMU euler: (x={self.euler.vector.x:.3f}, y={self.euler.vector.y:.3f}, z={self.euler.vector.z:.3f})\n"
+                f"  Offset will align IMU to ArUco reference"
             )
 
             self.publish_plane_to_base_tf(msg)
@@ -185,15 +189,44 @@ class ImuAlignNode(Node):
     # --- Main publishing logic ----------------------------------------
 
     def try_publish(self):
+        # データ到着状況を定期的にレポート（5秒おき）
+        now = self.get_clock().now().nanoseconds
+        if now - self._last_data_status_report_time > 5 * 1e9:
+            status = f"gyro={'OK' if self.gyro else 'MISSING'}, " \
+                     f"accel={'OK' if self.accel else 'MISSING'}, " \
+                     f"euler={'OK' if self.euler else 'MISSING'}"
+            if self.gyro is None or self.accel is None or self.euler is None:
+                self.get_logger().warn(
+                    f"⚠️ Waiting for IMU data: {status} "
+                    f"(/imu/aligned NOT publishing)"
+                )
+            else:
+                # タイムスタンプのずれをチェック
+                current_time = self.get_clock().now().nanoseconds
+                euler_age_ms = (current_time - self.euler.header.stamp.sec * 1e9 - self.euler.header.stamp.nanosec) / 1e6
+                gyro_age_ms = (current_time - self.gyro.header.stamp.sec * 1e9 - self.gyro.header.stamp.nanosec) / 1e6
+                accel_age_ms = (current_time - self.accel.header.stamp.sec * 1e9 - self.accel.header.stamp.nanosec) / 1e6
+                self.get_logger().info(
+                    f"⏱️ IMU data age: euler={euler_age_ms:.0f}ms, gyro={gyro_age_ms:.0f}ms, accel={accel_age_ms:.0f}ms"
+                )
+            self._last_data_status_report_time = now
+        
         # 必要な3種類のデータが揃っていない場合
         if self.gyro is None or self.accel is None or self.euler is None:
+            # デバッグ：どのデータが欠けているか毎回ログ出力
+            if self.calibration_done:
+                self.get_logger().warn(
+                    f"⚠️ try_publish() early return: gyro={'OK' if self.gyro else 'MISSING'}, "
+                    f"accel={'OK' if self.accel else 'MISSING'}, euler={'OK' if self.euler else 'MISSING'}",
+                    throttle_duration_sec=1.0
+                )
             return
 
-        # Vector3: x=roll, y=pitch, z=yaw
-        # from_euler("xyz") expects [roll, pitch, yaw]
+        # ESP32 の /imu/euler の軸定義に合わせたマッピング
+        # euler.x=yaw, euler.y=roll, euler.z=pitch
         imu_rot = R.from_euler(
-            "xyz", [self.euler.x, self.euler.y, self.euler.z]
-        )
+            "zyx", [self.euler.vector.x, self.euler.vector.z, self.euler.vector.y]
+        )  # yaw, pitch, roll の順
 
         # オフセットが設定されている場合 → 姿勢補正
         if self.offset_rot is not None:
@@ -221,24 +254,24 @@ class ImuAlignNode(Node):
             1e-3,
         ]
 
-        imu_msg.angular_velocity.x = self.gyro.x
-        imu_msg.angular_velocity.y = self.gyro.y
-        imu_msg.angular_velocity.z = self.gyro.z
+        imu_msg.angular_velocity.x = self.gyro.vector.x
+        imu_msg.angular_velocity.y = self.gyro.vector.y
+        imu_msg.angular_velocity.z = self.gyro.vector.z
         imu_msg.angular_velocity_covariance = [
-            1e-4,
+            1e-3,
             0.0,
             0.0,
             0.0,
-            1e-4,
+            1e-3,
             0.0,
             0.0,
             0.0,
-            1e-4,
+            1e-3,
         ]
 
-        imu_msg.linear_acceleration.x = self.accel.x
-        imu_msg.linear_acceleration.y = self.accel.y
-        imu_msg.linear_acceleration.z = self.accel.z
+        imu_msg.linear_acceleration.x = self.accel.vector.x
+        imu_msg.linear_acceleration.y = self.accel.vector.y
+        imu_msg.linear_acceleration.z = self.accel.vector.z
         imu_msg.linear_acceleration_covariance = [
             1e-3,
             0.0,
@@ -267,39 +300,30 @@ class ImuAlignNode(Node):
             imu_msg.orientation.w /= norm
 
         self.pub.publish(imu_msg)
-
-        # キャリブレーション前の待機メッセージ
-        if not self.calibration_done:
-            now = self.get_clock().now().nanoseconds
-            if now - self._last_log_time > 5 * 1e9:  # 5秒おき
-                self.get_logger().info(
-                    "Waiting for ArUco orientation for yaw calibration..."
-                )
-                self._last_log_time = now
+        self._publish_count += 1
         
-        # キャリブレーション後の定期診断（2秒おき）
-        elif self.last_aruco_msg is not None and self.euler is not None:
+        # 最初の数回は publish 成功をログ出力
+        if self._publish_count <= 5 or self._publish_count % 50 == 0:
+            self.get_logger().info(
+                f"📤 Published /imu/aligned (count={self._publish_count})",
+                throttle_duration_sec=1.0
+            )
+        
+        # キャリブレーション後の定期診断（3秒おき）
+        if self.calibration_done and self.last_aruco_quat is not None:
             now = self.get_clock().now().nanoseconds
-            if now - self._last_diagnostic_time > 2 * 1e9:
-                # 現在の補正済みIMU yawと最新のArUco yawを比較
-                aligned_euler = imu_rot.as_euler('xyz')
-                aruco_euler = self.aruco_quat.as_euler('xyz')
-                yaw_diff = np.rad2deg(aruco_euler[2] - aligned_euler[2])
-                
-                # タイムスタンプの鮮度を確認
-                euler_age = "unknown"
-                aruco_age = "unknown"
-                if self.euler_timestamp is not None:
-                    euler_age = f"{(now - (self.euler_timestamp.sec * 1e9 + self.euler_timestamp.nanosec)) / 1e9:.2f}s"
-                if self.last_aruco_msg is not None:
-                    aruco_stamp = self.last_aruco_msg.header.stamp
-                    aruco_age = f"{(now - (aruco_stamp.sec * 1e9 + aruco_stamp.nanosec)) / 1e9:.2f}s"
+            if now - self._last_diagnostic_time > 3 * 1e9:
+                # 現在の補正済みIMU姿勢と最新のArUco姿勢を比較
+                aligned_euler = imu_rot.as_euler('zyx')  # yaw, pitch, roll
+                aruco_euler = self.last_aruco_quat.as_euler('zyx')
+                yaw_diff = np.rad2deg(aruco_euler[0] - aligned_euler[0])
                 
                 self.get_logger().info(
-                    f"🔍 Diagnostic: ArUco yaw={np.rad2deg(aruco_euler[2]):.1f}° (age:{aruco_age}), "
-                    f"Aligned IMU yaw={np.rad2deg(aligned_euler[2]):.1f}° (age:{euler_age}), "
-                    f"diff={yaw_diff:.1f}°, "
-                    f"raw IMU euler=({self.euler.x:.3f},{self.euler.y:.3f},{self.euler.z:.3f})"
+                    f"🔍 Alignment check:\n"
+                    f"  ArUco yaw={np.rad2deg(aruco_euler[0]):.1f}°, "
+                    f"Aligned IMU yaw={np.rad2deg(aligned_euler[0]):.1f}°, "
+                    f"diff={yaw_diff:.1f}°\n"
+                    f"  Raw IMU euler: (x={self.euler.vector.x:.3f}, y={self.euler.vector.y:.3f}, z={self.euler.vector.z:.3f})"
                 )
                 self._last_diagnostic_time = now
 

@@ -34,7 +34,7 @@ class PlaneMarkerNode(Node):
             .integer_value
         )
         self.offset_height = (
-            self.declare_parameter("offset_height", 0.1)
+            self.declare_parameter("offset_height", 0.147)
             .get_parameter_value()
             .double_value
         )
@@ -302,7 +302,7 @@ class PlaneMarkerNode(Node):
         self.tf_broadcaster.sendTransform(t2)
 
         # --- 枠出力 ---
-        self.publish_ideal_rectangle(length=0.5, width=1.0)
+        self.publish_ideal_rectangle(length=1.0, width=0.5)
 
 
 def main(args=None):
