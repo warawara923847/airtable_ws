@@ -39,7 +39,11 @@ def generate_launch_description():
             '/aruco_single_50/marker',
             '/aruco_single_50/result',
             '/imu/aligned',
+            '/imu/euler',
+            '/imu/theta',
             '/moving_marker_pose',
+            '/moving_marker_pose2d',
+            '/moving_marker_velocity',
             '/plane_rectangle', # ArUco検出平面の四隅(rviz用)
             '/odometry/filtered',
             '/servo/cmd',
