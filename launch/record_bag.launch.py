@@ -23,9 +23,11 @@ def generate_launch_description():
         exp_name = LaunchConfiguration('exp_name').perform(context)
         timestamp = datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
         bag_dir = os.path.join(data_dir, f'{timestamp}_{exp_name}')
+        record_cfg = os.path.join(ws_dir, 'config', 'record.zstd_fast.yaml')
 
         cmd = [
             'ros2', 'bag', 'record',
+            '-s', 'mcap',
             '-o', bag_dir,
             '/aruco_single_10/pose',
             '/aruco_single_11/pose',

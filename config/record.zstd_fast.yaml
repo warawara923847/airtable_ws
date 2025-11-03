@@ -1,0 +1,8 @@
+# mcap::McapWriterOptions
+noChunkCRC: true
+noAttachmentCRC: true
+enableDataCRC: false
+chunkSize: 8388608     # 8 MB
+compression: zstd      # または lz4
+compressionLevel: 2    # 0(速)〜22(強圧縮)
+
