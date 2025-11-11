@@ -4,7 +4,7 @@ from launch_ros.actions import Node
 
 def generate_launch_description():
     # マーカーのサイズ [m]
-    marker_size = 0.075  # 例: 10cm
+    marker_size = 0.1  # 例: 10cm
 
     # 基準平面の4隅のマーカーID
     plane_ids = [10, 11, 12, 13]
@@ -12,6 +12,11 @@ def generate_launch_description():
     moving_id = 50
 
     nodes = []
+
+    # --- カメラトピック設定 ---
+    IR_IMAGE = "/camera/camera/infra1/image_rect_raw"
+    IR_INFO = "/camera/camera/infra1/camera_info"
+    IR_FRAME = "camera_infra1_optical_frame"
 
     # --- 基準マーカー4つ ---
     for mid in plane_ids:
@@ -24,14 +29,14 @@ def generate_launch_description():
                     {
                         "marker_id": mid,
                         "marker_size": marker_size,
-                        "camera_frame": "camera_color_optical_frame",
-                        "reference_frame": "camera_color_optical_frame",
+                        "camera_frame": IR_FRAME,
+                        "reference_frame": IR_FRAME,
                         "marker_frame": f"aruco_marker_{mid}",
                     }
                 ],
                 remappings=[
-                    ("/camera_info", "/camera/camera/color/camera_info"),
-                    ("/image", "/camera/camera/color/image_raw"),
+                    ("/camera_info", IR_INFO),
+                    ("/image", IR_IMAGE),
                 ],
             )
         )
@@ -46,14 +51,14 @@ def generate_launch_description():
                 {
                     "marker_id": moving_id,
                     "marker_size": marker_size,
-                    "camera_frame": "camera_color_optical_frame",
-                    "reference_frame": "camera_color_optical_frame",
+                    "camera_frame": IR_FRAME,
+                    "reference_frame": IR_FRAME,
                     "marker_frame": f"aruco_marker_{moving_id}",
                 }
             ],
             remappings=[
-                ("/camera_info", "/camera/camera/color/camera_info"),
-                ("/image", "/camera/camera/color/image_raw"),
+                ("/camera_info", IR_INFO),
+                ("/image", IR_IMAGE),
             ],
         )
     )

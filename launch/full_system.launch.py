@@ -3,6 +3,7 @@ from launch.actions import DeclareLaunchArgument, OpaqueFunction, IncludeLaunchD
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration
 from ament_index_python.packages import get_package_share_directory
+from launch_ros.actions import Node
 import os
 
 
@@ -20,10 +21,28 @@ def launch_setup(context, *args, **kwargs):
 
     # --- RealSense camera ---
     if use_camera == 'true':
+        rs_args = {
+            'enable_infra1': 'true',
+            'enable_infra2': 'false',
+
+            'enable_color': 'false',
+
+            'depth_module.depth_profile': '848x480x90',
+            'depth_module.infra_profile': '848x480x90',
+            # 'aligne_depth': 'false',
+            # 'pointcloud.enable': 'false',
+            'depth_module.emitter_enabled': 'false',
+            'depth_module.enable_auto_exposure': 'false',
+            'depth_module.exposure': '6000',
+            'depth_module.gain': '20',
+
+        }
+
         actions.append(
-            IncludeLaunchDescription(PythonLaunchDescriptionSource(
-                os.path.join(rs_pkg, 'launch', 'rs_launch.py')
-            ))
+            IncludeLaunchDescription(
+                PythonLaunchDescriptionSource(os.path.join(rs_pkg, 'launch', 'rs_launch.py')),
+                launch_arguments=rs_args.items()
+            )
         )
 
     # --- ESP32 joystick bridge ---

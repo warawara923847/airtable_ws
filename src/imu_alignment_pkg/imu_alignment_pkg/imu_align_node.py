@@ -28,6 +28,11 @@ class ImuAlignNode(Node):
 
         # Publisher
         self.pub = self.create_publisher(Imu, "/imu/aligned", 10)
+        
+        # Re-publish用（タイムスタンプ修正済み）
+        self.pub_euler_corrected = self.create_publisher(Vector3Stamped, "/imu/euler_corrected", 10)
+        self.pub_gyro_corrected = self.create_publisher(Vector3Stamped, "/imu/gyro_corrected", 10)
+        self.pub_accel_corrected = self.create_publisher(Vector3Stamped, "/imu/accel_corrected", 10)
 
         # TF Broadcaster
         self.tf_broadcaster = TransformBroadcaster(self)
@@ -39,6 +44,11 @@ class ImuAlignNode(Node):
         self.aruco_quat = None
         self.offset_rot = None
         self.last_aruco_quat = None  # 診断用：最新のArUco姿勢を保持
+        
+        # 停止検出用
+        self.last_publish_time = 0
+        self.was_stopped = False
+        self.euler_at_stop = None
 
         # Parameters
         self.calibration_done = False
@@ -53,15 +63,39 @@ class ImuAlignNode(Node):
         self._publish_count = 0  # /imu/aligned の publish 回数
 
         self.get_logger().info("IMU Alignment Node started ✅")
+        self.get_logger().info("Re-publishing with corrected timestamps:")
+        self.get_logger().info("  /imu/euler → /imu/euler_corrected")
+        self.get_logger().info("  /imu/gyro → /imu/gyro_corrected")
+        self.get_logger().info("  /imu/accel → /imu/accel_corrected")
 
     # --- Callbacks -----------------------------------------------------
 
     def gyro_callback(self, msg: Vector3Stamped):
-        self.gyro = msg  # メッセージ全体を保存
+        # ESP32のタイムスタンプは不正確なので現在時刻で上書き
+        from geometry_msgs.msg import Vector3Stamped as V3S
+        corrected_msg = V3S()
+        corrected_msg.header.stamp = self.get_clock().now().to_msg()
+        corrected_msg.header.frame_id = msg.header.frame_id
+        corrected_msg.vector = msg.vector
+        self.gyro = corrected_msg
+        
+        # 修正されたタイムスタンプで re-publish
+        self.pub_gyro_corrected.publish(corrected_msg)
+        
         self.try_publish()
 
     def accel_callback(self, msg: Vector3Stamped):
-        self.accel = msg  # メッセージ全体を保存
+        # ESP32のタイムスタンプは不正確なので現在時刻で上書き
+        from geometry_msgs.msg import Vector3Stamped as V3S
+        corrected_msg = V3S()
+        corrected_msg.header.stamp = self.get_clock().now().to_msg()
+        corrected_msg.header.frame_id = msg.header.frame_id
+        corrected_msg.vector = msg.vector
+        self.accel = corrected_msg
+        
+        # 修正されたタイムスタンプで re-publish
+        self.pub_accel_corrected.publish(corrected_msg)
+        
         self.try_publish()
 
     def euler_callback(self, msg: Vector3Stamped):
@@ -70,11 +104,15 @@ class ImuAlignNode(Node):
         # 角度を -π ~ π の範囲に正規化してメッセージ全体を保存
         from geometry_msgs.msg import Vector3Stamped as V3S
         normalized_msg = V3S()
-        normalized_msg.header = msg.header  # タイムスタンプを保持
+        normalized_msg.header.stamp = self.get_clock().now().to_msg()  # 現在時刻で上書き
+        normalized_msg.header.frame_id = msg.header.frame_id if msg.header.frame_id else "base_link"
         normalized_msg.vector.x = np.arctan2(np.sin(msg.vector.x), np.cos(msg.vector.x))
         normalized_msg.vector.y = np.arctan2(np.sin(msg.vector.y), np.cos(msg.vector.y))
         normalized_msg.vector.z = np.arctan2(np.sin(msg.vector.z), np.cos(msg.vector.z))
         self.euler = normalized_msg
+        
+        # 修正されたタイムスタンプで re-publish
+        self.pub_euler_corrected.publish(normalized_msg)
         
         # デバッグ：euler値が実際に変化しているか確認（5秒おき）
         self._euler_callback_count += 1
@@ -215,11 +253,40 @@ class ImuAlignNode(Node):
         if self.gyro is None or self.accel is None or self.euler is None:
             # デバッグ：どのデータが欠けているか毎回ログ出力
             if self.calibration_done:
+                euler_val = f"(x={self.euler.vector.x:.3f}, y={self.euler.vector.y:.3f}, z={self.euler.vector.z:.3f})" if self.euler else "N/A"
                 self.get_logger().warn(
                     f"⚠️ try_publish() early return: gyro={'OK' if self.gyro else 'MISSING'}, "
-                    f"accel={'OK' if self.accel else 'MISSING'}, euler={'OK' if self.euler else 'MISSING'}",
+                    f"accel={'OK' if self.accel else 'MISSING'}, euler={'OK' if self.euler else 'MISSING'}\n"
+                    f"  Last euler value: {euler_val}",
                     throttle_duration_sec=1.0
                 )
+            return
+        
+        # データの鮮度チェック（3つのタイムスタンプの差が1秒以上ある場合は古いデータとみなす）
+        euler_ts = self.euler.header.stamp.sec + self.euler.header.stamp.nanosec * 1e-9
+        gyro_ts = self.gyro.header.stamp.sec + self.gyro.header.stamp.nanosec * 1e-9
+        accel_ts = self.accel.header.stamp.sec + self.accel.header.stamp.nanosec * 1e-9
+        
+        max_ts = max(euler_ts, gyro_ts, accel_ts)
+        min_ts = min(euler_ts, gyro_ts, accel_ts)
+        time_diff = max_ts - min_ts
+        
+        if time_diff > 1.0:  # 1秒以上の差がある場合
+            self.get_logger().warn(
+                f"⚠️ IMU data timestamps differ by {time_diff:.2f}s - data too old, skipping publish\n"
+                f"  euler={euler_ts:.3f}s, gyro={gyro_ts:.3f}s, accel={accel_ts:.3f}s",
+                throttle_duration_sec=2.0
+            )
+            # 古いデータをクリアして、次回は新しいデータを待つ
+            if euler_ts < gyro_ts - 0.5:
+                self.euler = None
+                self.get_logger().info("Cleared old euler data")
+            if gyro_ts < euler_ts - 0.5:
+                self.gyro = None
+                self.get_logger().info("Cleared old gyro data")
+            if accel_ts < euler_ts - 0.5:
+                self.accel = None
+                self.get_logger().info("Cleared old accel data")
             return
 
         # ESP32 の /imu/euler の軸定義に合わせたマッピング
@@ -235,7 +302,19 @@ class ImuAlignNode(Node):
         quat = imu_rot.as_quat()
 
         imu_msg = Imu()
-        imu_msg.header.stamp = self.get_clock().now().to_msg()
+        # 元のIMUデータのタイムスタンプを使用（3つの中で最新のもの）
+        euler_ts = self.euler.header.stamp.sec + self.euler.header.stamp.nanosec * 1e-9
+        gyro_ts = self.gyro.header.stamp.sec + self.gyro.header.stamp.nanosec * 1e-9
+        accel_ts = self.accel.header.stamp.sec + self.accel.header.stamp.nanosec * 1e-9
+        
+        # 最新のタイムスタンプを持つメッセージを選択
+        if euler_ts >= gyro_ts and euler_ts >= accel_ts:
+            imu_msg.header.stamp = self.euler.header.stamp
+        elif gyro_ts >= accel_ts:
+            imu_msg.header.stamp = self.gyro.header.stamp
+        else:
+            imu_msg.header.stamp = self.accel.header.stamp
+            
         imu_msg.header.frame_id = "base_link"
 
         imu_msg.orientation.x = quat[0]
@@ -302,10 +381,43 @@ class ImuAlignNode(Node):
         self.pub.publish(imu_msg)
         self._publish_count += 1
         
+        # 停止から再開を検出
+        current_time = self.get_clock().now().nanoseconds
+        if self.last_publish_time > 0 and (current_time - self.last_publish_time) > 2e9:  # 2秒以上空いた
+            if not self.was_stopped:
+                self.was_stopped = True
+                self.euler_at_stop = (self.euler.vector.x, self.euler.vector.y, self.euler.vector.z)
+                self.get_logger().warn(
+                    f"⚠️ /imu/aligned publishing STOPPED for >2s\n"
+                    f"  euler at stop: (x={self.euler.vector.x:.3f}, y={self.euler.vector.y:.3f}, z={self.euler.vector.z:.3f})"
+                )
+            else:
+                # 再開
+                if self.euler_at_stop:
+                    dx = self.euler.vector.x - self.euler_at_stop[0]
+                    dy = self.euler.vector.y - self.euler_at_stop[1]
+                    dz = self.euler.vector.z - self.euler_at_stop[2]
+                    self.get_logger().warn(
+                        f"🔄 /imu/aligned publishing RESUMED\n"
+                        f"  euler now: (x={self.euler.vector.x:.3f}, y={self.euler.vector.y:.3f}, z={self.euler.vector.z:.3f})\n"
+                        f"  euler change during stop: (Δx={dx:.3f}, Δy={dy:.3f}, Δz={dz:.3f})\n"
+                        f"  This change will cause alignment drift!"
+                    )
+                self.was_stopped = False
+                self.euler_at_stop = None
+        else:
+            self.was_stopped = False
+        
+        self.last_publish_time = current_time
+        
         # 最初の数回は publish 成功をログ出力
         if self._publish_count <= 5 or self._publish_count % 50 == 0:
+            # タイムスタンプの差を確認（既に計算済み）
+            aligned_ts = imu_msg.header.stamp.sec + imu_msg.header.stamp.nanosec * 1e-9
+            
             self.get_logger().info(
-                f"📤 Published /imu/aligned (count={self._publish_count})",
+                f"📤 Published /imu/aligned (count={self._publish_count})\n"
+                f"  Timestamps: euler={euler_ts:.3f}s, gyro={gyro_ts:.3f}s, accel={accel_ts:.3f}s, aligned={aligned_ts:.3f}s",
                 throttle_duration_sec=1.0
             )
         

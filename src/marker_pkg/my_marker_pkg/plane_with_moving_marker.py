@@ -95,19 +95,52 @@ class PlaneMarkerNode(Node):
         self.get_logger().info("PlaneMarkerNode started")
 
     def initialize_plane_frame(self):
-        pts = np.array(list(self.fixed_poses.values()))
+        # マーカーIDでソートして常に同じ順番にする
+        sorted_ids = sorted(self.fixed_poses.keys())
+        pts = np.array([self.fixed_poses[mid] for mid in sorted_ids])
+        
         centroid = np.mean(pts, axis=0)
-        v1 = pts[1] - pts[0]
-        v2 = pts[2] - pts[0]
+        
+        # ベクトル v1, v2 を計算（常に同じマーカーIDペアを使用）
+        v1 = pts[1] - pts[0]  # ID昇順で2番目 - 1番目
+        v2 = pts[2] - pts[0]  # ID昇順で3番目 - 1番目
+        
+        # 法線（Z軸）を計算
         normal = np.cross(v1, v2)
         normal /= np.linalg.norm(normal)
-
         z_axis = normal
-        x_axis = pts[1] - pts[0]
-        x_axis /= np.linalg.norm(x_axis)
+        
+        # v1とv2のどちらが長辺か判定
+        v1_len = np.linalg.norm(v1)
+        v2_len = np.linalg.norm(v2)
+        
+        if v1_len > v2_len:
+            # v1が長辺 → X軸
+            x_axis = v1 / v1_len
+            long_edge_ids = (sorted_ids[0], sorted_ids[1])
+            short_edge_ids = (sorted_ids[0], sorted_ids[2])
+        else:
+            # v2が長辺 → X軸
+            x_axis = v2 / v2_len
+            long_edge_ids = (sorted_ids[0], sorted_ids[2])
+            short_edge_ids = (sorted_ids[0], sorted_ids[1])
+        
+        # Y軸 = Z軸 × X軸（右手系）
         y_axis = np.cross(z_axis, x_axis)
         y_axis /= np.linalg.norm(y_axis)
+        
+        # 念のため X軸を再計算して直交性を保証
+        x_axis = np.cross(y_axis, z_axis)
+        x_axis /= np.linalg.norm(x_axis)
+        
         R = np.vstack([x_axis, y_axis, z_axis]).T
+        
+        # ログ出力
+        self.get_logger().info(
+            f"plane_frame initialized: "
+            f"X-axis (long edge) = marker {long_edge_ids[0]} → {long_edge_ids[1]} ({max(v1_len, v2_len):.3f}m), "
+            f"Y-axis (short edge) = marker {short_edge_ids[0]} → {short_edge_ids[1]} ({min(v1_len, v2_len):.3f}m)"
+        )
 
         M = np.eye(4)
         M[:3, :3] = R
@@ -124,7 +157,8 @@ class PlaneMarkerNode(Node):
     def publish_plane_tf(self):
         t = TransformStamped()
         t.header.stamp = self.get_clock().now().to_msg()
-        t.header.frame_id = "camera_color_optical_frame"
+        # t.header.frame_id = "camera_color_optical_frame"
+        t.header.frame_id = "camera_infra1_optical_frame" # IRカメラ
         t.child_frame_id = "plane_frame"
         t.transform.translation.x = self.initial_centroid[0]
         t.transform.translation.y = self.initial_centroid[1]
@@ -302,7 +336,7 @@ class PlaneMarkerNode(Node):
         self.tf_broadcaster.sendTransform(t2)
 
         # --- 枠出力 ---
-        self.publish_ideal_rectangle(length=1.0, width=0.5)
+        self.publish_ideal_rectangle(length=2.0, width=1.0)
 
 
 def main(args=None):

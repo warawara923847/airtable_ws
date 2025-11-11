@@ -1,11 +1,13 @@
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument, ExecuteProcess, OpaqueFunction
+from launch.actions import DeclareLaunchArgument, ExecuteProcess, RegisterEventHandler, OpaqueFunction
+from launch.event_handlers import OnShutdown
 from launch.substitutions import LaunchConfiguration
 import os
 from datetime import datetime
 import yaml
 import subprocess
 import atexit
+import shlex
 
 def generate_launch_description():
 
@@ -23,11 +25,9 @@ def generate_launch_description():
         exp_name = LaunchConfiguration('exp_name').perform(context)
         timestamp = datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
         bag_dir = os.path.join(data_dir, f'{timestamp}_{exp_name}')
-        record_cfg = os.path.join(ws_dir, 'config', 'record.zstd_fast.yaml')
 
         cmd = [
             'ros2', 'bag', 'record',
-            '-s', 'mcap',
             '-o', bag_dir,
             '/aruco_single_10/pose',
             '/aruco_single_11/pose',
@@ -39,7 +39,7 @@ def generate_launch_description():
             '/aruco_single_12/marker',
             '/aruco_single_13/marker',
             '/aruco_single_50/marker',
-            '/aruco_single_50/result',
+            # '/aruco_single_50/result',
             '/imu/aligned',
             '/imu/euler',
             '/imu/theta',
@@ -52,27 +52,50 @@ def generate_launch_description():
             '/tf', '/tf_static'
         ]
 
-        # Register cleanup to write summary.yaml when launch ends
-        def cleanup():
-            if not os.path.exists(bag_dir):
-                print(f"[record_bag.launch.py] Bag directory not found. Skipping summary.")
-                return
-            info_cmd = ['ros2', 'bag', 'info', bag_dir]
-            summary_path = os.path.join(bag_dir, 'summary.yaml')
+        # === 終了時の後処理: summary.yaml 保存 + 再圧縮を非同期起動 ===
+        def _on_shutdown(_context):
+            # 1) summary.yaml を bag_dir に保存
             try:
-                info_output = subprocess.check_output(info_cmd).decode('utf-8')
-                with open(summary_path, 'w') as f:
-                    f.write(info_output)
+                if os.path.isdir(bag_dir):
+                    info_cmd = ['ros2', 'bag', 'info', bag_dir]
+                    info_output = subprocess.check_output(info_cmd).decode('utf-8', errors='ignore')
+                    summary_path = os.path.join(bag_dir, 'summary.yaml')
+                    with open(summary_path, 'w') as f:
+                        f.write(info_output)
+                    print(f"[record_bag.launch.py] Summary saved to {summary_path}")
+                else:
+                    print(f"[record_bag.launch.py] Bag directory not found. Skipping summary.")
             except Exception as e:
-                print(f"[record_bag.launch.py] Failed to get bag info: {e}")
-                with open(summary_path, 'w') as f:
-                    yaml.dump({'experiment': exp_name, 'timestamp': timestamp}, f)
-            print(f"[record_bag.launch.py] Summary saved to {summary_path}")
+                # ros2 bag info が失敗したら最低限のメタデータだけ出す
+                try:
+                    summary_path = os.path.join(bag_dir, 'summary.yaml')
+                    with open(summary_path, 'w') as f:
+                        yaml.dump({'experiment': exp_name, 'timestamp': timestamp}, f)
+                    print(f"[record_bag.launch.py] Fallback summary saved to {summary_path} (reason: {e})")
+                except Exception as e2:
+                    print(f"[record_bag.launch.py] Failed to write fallback summary: {e2}")
 
-        atexit.register(cleanup)
+            # 2) 再圧縮（変換）スクリプトを低優先度でバックグラウンド起動
+            #    scripts/convert_one_bag.sh <bag_dir> が存在すれば起動
+            script = os.path.join(ws_dir, 'scripts', 'convert_one_bag.sh')
+            if os.path.exists(script) and os.path.isdir(bag_dir):
+                cmdline = f'nice -n 10 ionice -c2 -n7 {shlex.quote(script)} {shlex.quote(bag_dir)}'
+                try:
+                    subprocess.Popen(cmdline, cwd=ws_dir, shell=True)
+                    print(f"[record_bag.launch.py] Spawned converter: {cmdline}")
+                except Exception as e:
+                    print(f"[record_bag.launch.py] Failed to spawn converter: {e}")
+            else:
+                print(f"[record_bag.launch.py] Converter script not found or bag_dir missing. Skip.")
 
-        # Use ExecuteProcess so launch manages rosbag’s lifecycle
-        return [ExecuteProcess(cmd=cmd, output='screen')]
+            return []
+
+        actions = [
+            ExecuteProcess(cmd=cmd, shell=False, output='screen'),
+            RegisterEventHandler(OnShutdown(on_shutdown=[OpaqueFunction(function=_on_shutdown)])),
+        ]
+        print('[INFO] recording to:', bag_dir)
+        return actions
 
     return LaunchDescription([
         exp_name_arg,

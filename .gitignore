@@ -5,6 +5,7 @@
 
 # ROS2 bag files
 data/bags/*
+data/converted/*
 !data/bags/.keep
 
 #Experimental logs
