@@ -217,6 +217,7 @@ void loop() {
       if (fail_count > 5) {  // 5回連続失敗で再起動
           Serial.println("Agent unreachable, restarting ESP...");
           delay(100);
+          servo2.write(servo_center); // サーボ停止
           ESP.restart();
       }
     } else {
