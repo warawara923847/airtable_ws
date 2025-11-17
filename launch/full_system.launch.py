@@ -31,9 +31,9 @@ def launch_setup(context, *args, **kwargs):
             'depth_module.infra_profile': '848x480x90',
             # 'aligne_depth': 'false',
             # 'pointcloud.enable': 'false',
-            'depth_module.emitter_enabled': 'false',
+            'depth_module.emitter_enabled': '0',
             'depth_module.enable_auto_exposure': 'false',
-            'depth_module.exposure': '6000',
+            'depth_module.exposure': '5000',
             'depth_module.gain': '20',
 
         }

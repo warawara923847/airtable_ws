@@ -32,6 +32,8 @@ def generate_launch_description():
                         "camera_frame": IR_FRAME,
                         "reference_frame": IR_FRAME,
                         "marker_frame": f"aruco_marker_{mid}",
+                        "corner_refinement": "SUBPIX",
+                        "detection_mode": "DM_NORMAL",
                     }
                 ],
                 remappings=[
@@ -54,6 +56,8 @@ def generate_launch_description():
                     "camera_frame": IR_FRAME,
                     "reference_frame": IR_FRAME,
                     "marker_frame": f"aruco_marker_{moving_id}",
+                    "corner_refinement": "SUBPIX",
+                    "detection_mode": "DM_NORMAL",
                 }
             ],
             remappings=[

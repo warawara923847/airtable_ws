@@ -49,6 +49,7 @@ def generate_launch_description():
             '/plane_rectangle', # ArUco検出平面の四隅(rviz用)
             '/odometry/filtered',
             '/servo/cmd',
+            '/joy',
             '/tf', '/tf_static'
         ]
 
